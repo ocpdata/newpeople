@@ -106,6 +106,14 @@ export function createCoachAdapter({
         planner: pipeline.diagnostics.planner,
         evidence: pipeline.diagnostics.evidence,
         answerAudit: pipeline.diagnostics.answerAudit,
+        execution: {
+          retries: pipeline.diagnostics.retries || [],
+          repair: pipeline.diagnostics.repair || null,
+          deterministicReads: pipeline.diagnostics.deterministicReads || [],
+          grounding: pipeline.diagnostics.grounding || null,
+          speculativeSynthesis:
+            pipeline.diagnostics.speculativeSynthesis || null,
+        },
       };
       return result;
     },

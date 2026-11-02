@@ -34,6 +34,10 @@ import {
 } from "./block-runtime.js";
 import { completeAnswerFromFacts } from "./answer-completion.js";
 import {
+  answerTextsToVerify,
+  verifyAnswerValues,
+} from "./answer-grounding.js";
+import {
   pruneEmptySearches,
   reinforceCoachReads,
   resolvedRecordTool,
@@ -260,6 +264,11 @@ function structuredPayload(instruction, context, featureCode) {
   };
 }
 
+function coachFlag(name, override) {
+  if (typeof override === "boolean") return override;
+  return String(process.env[name] || "true").toLowerCase() !== "false";
+}
+
 export function createCoachBlockPipeline({
   dependencies,
   user,
@@ -273,6 +282,14 @@ export function createCoachBlockPipeline({
   limits = COACH_BLOCK_LIMITS,
 }) {
   const deadlineAt = Date.now() + limits.maxTurnMs;
+  const groundingEnabled = coachFlag(
+    "COACH_ANSWER_GROUNDING_ENABLED",
+    dependencies.coachAnswerGroundingEnabled,
+  );
+  const speculativeSynthesisEnabled = coachFlag(
+    "COACH_SPECULATIVE_SYNTHESIS_ENABLED",
+    dependencies.coachSpeculativeSynthesisEnabled,
+  );
   const coachFeatureCode = dependencies.featureCode || "mi_coach";
   const diagnostics = {
     architecture: "coach_blocks_v1",
@@ -653,15 +670,43 @@ export function createCoachBlockPipeline({
   let lastSynthesis = null;
   let repairAttempted = false;
 
-  const runAnswerAudit = (candidate, activeContext) =>
-    trace.span(
+  // The comparison of figures and dates with the evidence informs the audit; it never rejects an answer by itself,
+  // because a value outside the evidence can be a target or a hypothesis.
+  const checkAnswerValues = (candidate, activeContext) => {
+    if (!groundingEnabled) return null;
+    try {
+      const checks = verifyAnswerValues({
+        texts: answerTextsToVerify(candidate),
+        sources: [
+          evidence,
+          question,
+          history,
+          guide,
+          activeContext,
+          readModel?.effectiveContext,
+        ],
+      });
+      diagnostics.grounding = {
+        checkedValues: checks.checked,
+        notInEvidence: checks.ungrounded.length,
+        kinds: [...new Set(checks.ungrounded.map((item) => item.kind))],
+      };
+      return checks;
+    } catch {
+      return null;
+    }
+  };
+
+  const runAnswerAudit = (candidate, activeContext) => {
+    const checks = checkAnswerValues(candidate, activeContext);
+    return trace.span(
       "B10",
       "B9",
       "Auditar respuesta final de Coach",
       async () =>
         requestStructured(
           structuredPayload(
-            "Audita la respuesta final de Coach. Verifica afirmaciones CRM únicamente contra authorizedEvidence; la guía y las reglas sustentan orientación de coaching, no datos de clientes. El historial y los IDs mencionados por el usuario no prueban hechos. Las operaciones son propuestas editables, nunca ejecución. No exijas disponibilidad ni datos futuros como hechos para proponer una operación. Valida identidad y vínculos de entidades con fuentes autorizadas. Un resultado vacío solo sustenta ausencia en el alcance de la lectura realizada, nunca ausencia global. Marca supported solo si todas las afirmaciones están respaldadas o claramente identificadas como recomendaciones/hipótesis. Si no puedes decidir usa inconclusive. No autorices escrituras. JSON:{status:supported|unsupported|inconclusive,unsupportedClaims:[]}.",
+            "Audita la respuesta final de Coach. Verifica afirmaciones CRM únicamente contra authorizedEvidence; la guía y las reglas sustentan orientación de coaching, no datos de clientes. El historial y los IDs mencionados por el usuario no prueban hechos. Las operaciones son propuestas editables, nunca ejecución. No exijas disponibilidad ni datos futuros como hechos para proponer una operación. Valida identidad y vínculos de entidades con fuentes autorizadas. Un resultado vacío solo sustenta ausencia en el alcance de la lectura realizada, nunca ausencia global. Si deterministicChecks.valuesNotInEvidence trae cifras o fechas, el servidor comprobó que no constan en la evidencia: solo son válidas si la respuesta las presenta claramente como meta, recomendación o hipótesis; si las afirma como datos del CRM, marca unsupported e inclúyelas en unsupportedClaims. Marca supported solo si todas las afirmaciones están respaldadas o claramente identificadas como recomendaciones/hipótesis. Si no puedes decidir usa inconclusive. No autorices escrituras. JSON:{status:supported|unsupported|inconclusive,unsupportedClaims:[]}.",
             {
               question,
               history,
@@ -673,6 +718,14 @@ export function createCoachBlockPipeline({
               authorizedEvidence: evidence,
               proposedAnswer: candidate,
               evidenceVerification: diagnostics.evidence,
+              ...(checks
+                ? {
+                    deterministicChecks: {
+                      checkedValues: checks.checked,
+                      valuesNotInEvidence: checks.ungrounded.slice(0, 10),
+                    },
+                  }
+                : {}),
             },
             coachFeatureCode,
           ),
@@ -684,6 +737,7 @@ export function createCoachBlockPipeline({
         unsupportedClaimsCount: value.unsupportedClaims.length,
       }),
     );
+  };
 
   // One rewrite that drops what the audit could not support. Operation turns are not rewritten: their text is tied to
   // proposals that went through the channel policy.
@@ -1090,8 +1144,7 @@ export function createCoachBlockPipeline({
               "clarification",
               ["Plan de consulta válido"],
             );
-          const failure = await assess();
-          if (failure) return failure;
+          const buildSynthesisPayload = (verification) => {
           const basePayload = promptArguments
             ? dependencies.buildCoachPrompt(
                 {
@@ -1101,7 +1154,7 @@ export function createCoachBlockPipeline({
                 ...promptArguments.slice(1),
               )
             : request.payload;
-          const payload = {
+          return {
             ...basePayload,
             input: [
               ...(basePayload.input || []),
@@ -1115,16 +1168,18 @@ export function createCoachBlockPipeline({
                 role: "user",
                 content: JSON.stringify({
                   verifiedEvidence: evidence,
-                  verification: diagnostics.evidence,
+                  verification,
                   coachPlan: plan,
                 }),
               },
             ],
           };
+          };
           const phase = request.phase || "coach";
           const isOperationTurn =
             (readModel?.intentRouting?.mode || plan?.mode) === "operation";
-          const response = await trace.span(
+          const synthesize = (payload) =>
+            trace.span(
             "B5",
             "B10",
             "Formar respuesta de Coach",
@@ -1156,6 +1211,43 @@ export function createCoachBlockPipeline({
               proposedOperations: value.operations?.length || 0,
             }),
           );
+          // The evidence check and the synthesis do not depend on each other when the reads were clean, so they run
+          // together; the synthesis is discarded if the check asks for more evidence or stops the turn.
+          const evidenceLooksClean =
+            hasCoachEvidence(evidence) &&
+            !evidence.some((item) => item.error || item.truncated);
+          const coachingFromGuide =
+            readModel?.intentRouting?.mode === "coaching" &&
+            Boolean(String(guide).trim());
+          let speculative = null;
+          const evidenceCountBefore = evidence.length;
+          if (
+            speculativeSynthesisEnabled &&
+            (evidenceLooksClean || coachingFromGuide)
+          ) {
+            speculative = synthesize(
+              buildSynthesisPayload({
+                status: "pending",
+                sourceMetrics: summarizeCoachEvidence(evidence),
+              }),
+            );
+            // Its outcome is read only when the check allows it; a rejection must not surface on its own.
+            speculative.catch(() => undefined);
+          }
+          const failure = await assess();
+          if (failure) {
+            if (speculative) diagnostics.speculativeSynthesis = "discarded_check_failed";
+            return failure;
+          }
+          const payload = buildSynthesisPayload(diagnostics.evidence);
+          let response;
+          if (speculative && evidence.length === evidenceCountBefore) {
+            response = await speculative;
+            diagnostics.speculativeSynthesis = "used";
+          } else {
+            if (speculative) diagnostics.speculativeSynthesis = "discarded_new_evidence";
+            response = await synthesize(payload);
+          }
           lastSynthesis = { payload, phase };
           return {
             ...response,
@@ -1236,6 +1328,12 @@ export function createCoachBlockPipeline({
         const outOfScope =
           plan?.intent === "general_query" && !hasCoachEvidence(evidence);
         let repaired = false;
+        const firstAudit = {
+          status: audit.status,
+          unsupportedClaims: audit.unsupportedClaims
+            .slice(0, 3)
+            .map((claim) => String(claim).slice(0, 200)),
+        };
         if (auditFailed(audit) && !outOfScope) {
           const candidate = await repairAnswer(
             finalResponse,
@@ -1256,6 +1354,7 @@ export function createCoachBlockPipeline({
             diagnostics.repair = {
               attempted: true,
               outcome: repaired ? "repaired" : "still_unsupported",
+              firstAudit,
             };
         }
         diagnostics.answerAudit = audit;

@@ -8,6 +8,10 @@ import {
 } from "../src/coach/block-runtime.js";
 import { completeAnswerFromFacts } from "../src/coach/answer-completion.js";
 import {
+  answerTextsToVerify,
+  verifyAnswerValues,
+} from "../src/coach/answer-grounding.js";
+import {
   pruneEmptySearches,
   reinforceCoachReads,
 } from "../src/coach/deterministic-reads.js";
@@ -38,6 +42,7 @@ function fixture({
   failOnce = null,
   effectiveContext = { accountId: 7 },
   question = "¿Qué debo revisar?",
+  flags = {},
 } = {}) {
   const calls = [];
   let failed = false;
@@ -91,6 +96,7 @@ function fixture({
       requestMiAgentJson,
       executeReadTool,
       prepareReadModel,
+      ...flags,
       loadProcessGuide: async () => guide,
       buildStageReadiness: vi.fn(),
       buildCoachPrompt: vi.fn(() => ({ input: [{ role: "system", content: "Sistema" }] })),
@@ -300,10 +306,11 @@ describe("Coach B6–B10 pipeline", () => {
     const f = fixture();
     const result = await run(f);
     expect(result.response.answer).toContain("autorizada");
+    // The synthesis starts together with the evidence check when the reads were clean.
     expect(f.calls.map((item) => item.phase)).toEqual([
       "coach_intent_route",
-      "coach_evidence_assessment",
       "coach",
+      "coach_evidence_assessment",
       "coach_answer_audit",
     ]);
     expect(
@@ -540,7 +547,11 @@ describe("Coach: respuestas completas, reparación y reintentos", () => {
     expect(result.response.answer).toBe("Solo lo que consta en el CRM");
     expect(result.response.responseType).toBe("informational");
     expect(result.qualityTrace.validationReasons).toContain("coach_answer_repaired");
-    expect(f.pipeline.diagnostics.repair).toEqual({ attempted: true, outcome: "repaired" });
+    expect(f.pipeline.diagnostics.repair).toEqual({
+      attempted: true,
+      outcome: "repaired",
+      firstAudit: { status: "unsupported", unsupportedClaims: ["Monto inventado"] },
+    });
     expect(f.calls.filter((call) => call.phase === "coach_answer_audit")).toHaveLength(2);
     const repairCall = f.calls.find(isRepair);
     expect(JSON.stringify(repairCall.payload.input)).toContain("Monto inventado");
@@ -555,7 +566,7 @@ describe("Coach: respuestas completas, reparación y reintentos", () => {
     expect(result.response.answer).toBe(COACH_UNSUPPORTED_ANSWER);
     expect(result.response.answer).toContain("registro concreto");
     expect(result.qualityTrace.validationStatus).toBe("error");
-    expect(f.pipeline.diagnostics.repair).toEqual({ attempted: true, outcome: "still_unsupported" });
+    expect(f.pipeline.diagnostics.repair).toMatchObject({ attempted: true, outcome: "still_unsupported" });
     expect(f.calls.filter(isRepair)).toHaveLength(1);
   });
 
@@ -828,6 +839,180 @@ describe("Coach: lectura por ID del registro identificado", () => {
     expect(pruneEmptySearches([empty, found])).toEqual([found]);
     expect(pruneEmptySearches([empty])).toEqual([empty]);
     expect(pruneEmptySearches([{ toolName: "searchOpportunities", result: null, error: "x" }, found])).toHaveLength(2);
+  });
+});
+
+describe("Coach: síntesis en paralelo y comprobación de valores", () => {
+  async function runNormalizedAudit(f) {
+    const plan = await f.pipeline.hooks.classifyCoachIntentWithModel({
+      catalog: COACH_INTENT_CATALOG,
+    });
+    await f.pipeline.hooks.prepareReadModel({
+      availableTools: [{ name: "searchAccounts" }, { name: "searchOpportunities" }],
+      intentRouting: { mode: plan.mode },
+    });
+    await f.pipeline.hooks.loadProcessGuide();
+    const raw = await f.pipeline.hooks.requestResponse({ payload: { input: [] }, phase: "coach" });
+    const response = f.pipeline.hooks.normalizeResponse(raw, {}, "¿Qué debo revisar?", { accountId: 7 }, null);
+    return f.pipeline.finalize({
+      response,
+      activeContext: { accountId: 7 },
+      qualityTrace: { validationStatus: "valid", validationReasons: [] },
+    });
+  }
+  const phases = (f) => f.calls.map((item) => item.phase);
+
+  it("redacta mientras se verifica la evidencia y usa esa redacción si la verificación basta", async () => {
+    const f = fixture();
+    const result = await run(f);
+    expect(phases(f).slice(0, 3)).toEqual(["coach_intent_route", "coach", "coach_evidence_assessment"]);
+    expect(phases(f).filter((phase) => phase === "coach")).toHaveLength(1);
+    expect(f.pipeline.diagnostics.speculativeSynthesis).toBe("used");
+    expect(result.response.responseType).toBe("informational");
+  });
+
+  it("descarta la redacción adelantada si la verificación pide más evidencia y redacta de nuevo", async () => {
+    const f = fixture({
+      assessments: [{ status: "incomplete", missingTools: ["searchOpportunities"], missingFacts: [] }],
+    });
+    await run(f, ["searchAccounts", "searchOpportunities"]);
+    expect(phases(f).filter((phase) => phase === "coach")).toHaveLength(2);
+    expect(f.pipeline.diagnostics.speculativeSynthesis).toBe("discarded_new_evidence");
+  });
+
+  it("descarta la redacción adelantada si la verificación detiene el turno", async () => {
+    const f = fixture({
+      assessments: [{ status: "clarification", clarificationQuestion: "¿Cuál cuenta?" }],
+    });
+    const result = await run(f);
+    expect(result.response.responseType).toBe("clarification");
+    expect(f.pipeline.diagnostics.speculativeSynthesis).toBe("discarded_check_failed");
+  });
+
+  it("no redacta por adelantado sin evidencia limpia ni con la bandera apagada", async () => {
+    const empty = fixture({ reads: { searchAccounts: [] }, assessments: [{ status: "no_results", missingTools: [], missingFacts: [] }] });
+    await run(empty);
+    expect(empty.pipeline.diagnostics.speculativeSynthesis).toBeUndefined();
+
+    const off = fixture({ flags: { coachSpeculativeSynthesisEnabled: false } });
+    await run(off);
+    expect(phases(off).slice(0, 3)).toEqual(["coach_intent_route", "coach_evidence_assessment", "coach"]);
+    expect(off.pipeline.diagnostics.speculativeSynthesis).toBeUndefined();
+  });
+
+  it("un fallo de la redacción adelantada no se pierde cuando la verificación detiene el turno", async () => {
+    const f = fixture({
+      assessments: [{ status: "clarification", clarificationQuestion: "¿Cuál cuenta?" }],
+      synthesize: () => {
+        throw new Error("HTTP 400 sin reintento");
+      },
+    });
+    const result = await run(f);
+    expect(result.response.responseType).toBe("clarification");
+  });
+
+  it("entrega a la auditoría las cifras y fechas que no constan en la evidencia", async () => {
+    let auditRequest = null;
+    const f = fixture({
+      reads: { searchAccounts: [{ id: 7, name: "Cuenta", amountUsd: 8000, closeDate: "2026-10-31" }] },
+      audit: (request) => {
+        auditRequest = JSON.parse(request.payload.input[1].content);
+        return { status: "supported" };
+      },
+      synthesize: () => ({
+        answer: "La cuenta suma 8,000 USD y cierra el 31 de octubre de 2026, pero hay otros 45,500 USD el 9 de octubre de 2026.",
+        responseType: "informational",
+        operations: [],
+      }),
+    });
+    await runNormalizedAudit(f);
+    expect(auditRequest.deterministicChecks.checkedValues).toBe(4);
+    expect(auditRequest.deterministicChecks.valuesNotInEvidence).toEqual([
+      { kind: "date", text: "9 de octubre de 2026" },
+      { kind: "number", text: "45,500" },
+    ]);
+    expect(f.pipeline.diagnostics.grounding).toEqual({ checkedValues: 4, notInEvidence: 2, kinds: ["date", "number"] });
+  });
+
+  it("no rechaza por sí sola una respuesta con valores fuera de la evidencia: decide la auditoría", async () => {
+    const f = fixture({
+      audit: { status: "supported" },
+      synthesize: () => ({ answer: "Te conviene apuntar a 90,000 USD este trimestre.", responseType: "recommendation", operations: [] }),
+    });
+    const result = await runNormalizedAudit(f);
+    expect(result.response.answer).toContain("90,000 USD");
+    expect(f.pipeline.diagnostics.grounding.notInEvidence).toBe(1);
+  });
+
+  it("la comprobación se puede apagar y entonces la auditoría no recibe deterministicChecks", async () => {
+    let auditRequest = null;
+    const f = fixture({
+      flags: { coachAnswerGroundingEnabled: false },
+      audit: (request) => {
+        auditRequest = JSON.parse(request.payload.input[1].content);
+        return { status: "supported" };
+      },
+    });
+    await runNormalizedAudit(f);
+    expect(auditRequest).not.toHaveProperty("deterministicChecks");
+    expect(f.pipeline.diagnostics.grounding).toBeUndefined();
+  });
+});
+
+describe("Coach: comparación de cifras y fechas con la evidencia", () => {
+  const sources = [
+    [{ toolName: "getOpportunity", result: { id: 121, amountUsd: 8000, closeDate: "2026-10-31T00:00:00.000Z", riskReasons: ["53 días sin actividad"] } }],
+    { coverage: { pct: 29.6 }, totalAmountUsd: 2200000 },
+    "¿Y si cierro 120,000 en el trimestre?",
+  ];
+  const check = (text) => verifyAnswerValues({ texts: [text], sources });
+
+  it("reconoce importes, porcentajes y fechas escritos de otra forma", () => {
+    for (const text of [
+      "Son 8,000 USD",
+      "Son 8.000 USD",
+      "Son USD 8 000",
+      "Cobertura de 29.6%",
+      "Cobertura de aproximadamente 30%",
+      "El total es de 2.2 millones",
+      "Cierra el 31 de octubre de 2026",
+      "Cierra el 31 de octubre",
+      "Lleva 53 días sin actividad y el monto citado por ti de 120,000",
+    ])
+      expect(check(text).ungrounded).toEqual([]);
+  });
+
+  it("marca lo que no consta en la evidencia", () => {
+    expect(check("Son 9,500 USD").ungrounded).toEqual([{ kind: "number", text: "9,500" }]);
+    expect(check("Cobertura de 45%").ungrounded).toEqual([{ kind: "percentage", text: "45%" }]);
+    expect(check("Cierra el 1 de noviembre de 2026").ungrounded).toEqual([{ kind: "date", text: "1 de noviembre de 2026" }]);
+    expect(check("Son 3 millones").ungrounded).toEqual([{ kind: "number", text: "3 millones" }]);
+  });
+
+  it("reconoce las fechas que el CRM entrega como objetos Date", () => {
+    const withDates = [{ closeDate: new Date(2026, 9, 31), nextStep: { dueDate: new Date("2026-10-09T00:00:00.000Z") } }];
+    const result = verifyAnswerValues({
+      texts: ["Cierra el 31 de octubre de 2026 y el siguiente paso vence el 9 de octubre de 2026"],
+      sources: [withDates],
+    });
+    expect(result.ungrounded).toEqual([]);
+    expect(result.checked).toBe(2);
+  });
+
+  it("no compara años, conteos pequeños ni identificadores de lista", () => {
+    const result = check("En 2026 hay 13 oportunidades y 4 sin siguiente paso. 1. Primero");
+    expect(result.ungrounded).toEqual([]);
+    expect(result.checked).toBe(0);
+  });
+
+  it("verifica el texto de la respuesta, las inferencias y los extractos de los hechos", () => {
+    expect(
+      answerTextsToVerify({
+        answer: "A",
+        inferences: ["B", { label: "C", excerpt: "D" }],
+        facts: [{ label: "x", excerpt: "E" }, { label: "y" }],
+      }),
+    ).toEqual(["A", "B", "C", "D", "E"]);
   });
 });
 

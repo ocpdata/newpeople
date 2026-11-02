@@ -197,6 +197,11 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
     "verification_unavailable",
     "verification_error",
     "answer_generation_error",
+    // Statuses of the Coach pipeline that were reported as verification_error.
+    "sufficient_for_operation",
+    "sufficient_for_coaching",
+    "library_not_authorized",
+    "error",
   ]);
   const allowedEvidenceErrors = new Set([
     "turn_timeout",

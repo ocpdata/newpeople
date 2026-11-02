@@ -108,8 +108,8 @@ describe("Coach block adapter integration", () => {
       deps.requestMiAgentJson.mock.calls.map(([request]) => request.phase),
     ).toEqual([
       "coach_intent_route",
-      "coach_evidence_assessment",
       "coach",
+      "coach_evidence_assessment",
       "coach_answer_audit",
     ]);
     expect(result.response.entities.accountId).toBe(7);

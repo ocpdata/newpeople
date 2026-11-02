@@ -298,6 +298,8 @@ export async function runCoachJob({
           jobType: "mi_coach_chat",
         })
     : null;
+  // The first model call classifies the request; the seller should see a phase from the start.
+  progressReporter.report("understanding");
   const decision = await runCoachDecision(
     question,
     decisionContext,

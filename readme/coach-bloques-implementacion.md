@@ -66,6 +66,14 @@ El filtro de texto del plan (por ejemplo, «Protección de Documentos Sealpath d
 
 `diagnostics.deterministicReads` lista las lecturas añadidas por el servidor. Las herramientas de lectura comparten código con Cliente existente, por lo que esta lógica vive solo en el pipeline de Coach.
 
+## Síntesis en paralelo y comprobación de valores
+
+- **Redacción en paralelo con la verificación de evidencia:** cuando las lecturas salieron completas, sin errores ni truncamiento (o la respuesta es de coaching sobre la guía autorizada), la redacción empieza a la vez que el verificador de evidencia. Si el verificador queda conforme sin pedir lecturas, se usa esa redacción y el turno se ahorra la duración del verificador (≈1.8 s). Si pide más evidencia o detiene el turno (aclaración, evidencia insuficiente), la redacción adelantada se descarta y, si procede, se redacta de nuevo con la evidencia completa. El verificador no se omite en ningún caso. `diagnostics.speculativeSynthesis` vale `used`, `discarded_new_evidence` o `discarded_check_failed`. Se apaga con `COACH_SPECULATIVE_SYNTHESIS_ENABLED=false`.
+- **Comprobación de cifras y fechas:** antes de la auditoría, el código compara los importes, porcentajes, decimales, cifras de tres o más dígitos y fechas completas de la respuesta con la evidencia autorizada, la pregunta, el historial y la guía (`answer-grounding.js`). No compara años ni conteos pequeños. Reconoce `8,000`, `8.000`, `8 000`, `2.2 millones`, redondeos de porcentaje y fechas que el CRM entrega como objetos `Date`. El resultado no rechaza la respuesta por sí solo, porque un valor fuera de la evidencia puede ser una meta o una hipótesis: se entrega a la auditoría en `deterministicChecks.valuesNotInEvidence`, que lo acepta solo si la respuesta lo presenta como meta, recomendación o hipótesis. Se apaga con `COACH_ANSWER_GROUNDING_ENABLED=false`.
+- **Diagnóstico:** `result.coachArchitecture.execution` conserva `retries`, `repair` (con el resultado de la primera auditoría), `deterministicReads`, `grounding` y `speculativeSynthesis`.
+- **Estados de evidencia en las trazas:** `sufficient_for_operation`, `sufficient_for_coaching`, `library_not_authorized` y `error` se conservan tal cual; antes se registraban como `verification_error`.
+- **Progreso:** la fase «Entendiendo tu pregunta» se muestra desde que empieza el turno, durante la clasificación inicial.
+
 ## Validación
 
 - `coach-block-pipeline.test.js`: planificación, herramientas inventadas, alcance, lectura adicional, errores, ceros, guía, auditoría y límites.
