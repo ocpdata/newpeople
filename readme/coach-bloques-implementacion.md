@@ -55,6 +55,17 @@ El turno dispone de 45 segundos para llamadas de los bloques, hasta 8 lecturas y
 - **Reintentos:** una llamada al proveedor que falla por un error transitorio (HTTP 5xx o 429 que no sea de cuota, red, respuesta que no es JSON válido) se repite una vez si queda tiempo. También se repite una vez la verificación o auditoría cuya respuesta no cumple su esquema. Los rechazos por cuota y el vencimiento del turno no se reintentan. Los reintentos se anotan en la traza y en `diagnostics.retries`.
 - **Mensajes de fallo:** cada fallo dice qué ocurrió y qué intentar a continuación (`failure-messages.js`). Una pregunta sin respaldo del CRM sigue respondiéndose como fuera de alcance, no como error.
 
+## Lectura por ID del registro identificado
+
+El filtro de texto del plan (por ejemplo, «Protección de Documentos Sealpath de Grupo Diestra») se compara con el nombre de la oportunidad o con el de la cuenta, nunca con ambos a la vez, así que puede no devolver nada para un registro que sí existe. Cuando B7 ya identificó el registro, el servidor lo lee por ID (`deterministic-reads.js`):
+
+- **Oportunidad identificada** y plan `opportunity_query`: añade `getOpportunity` y `getOpportunityActivities`, y `getOpportunityReadiness` si la pregunta es de avance de etapa. Solo añade herramientas que el canal autoriza y deja margen de lecturas para el verificador.
+- **Cuenta identificada** y plan `account_query`: `searchAccounts` se ejecuta acotada por el ID de la cuenta, sin el texto del plan.
+- Una búsqueda de oportunidades vacía no llega al modelo junto al registro leído por ID, para no parecer una negación.
+- Si el verificador concluye `no_results` y hay un registro identificado que aún no se leyó, se lee por ID y se vuelve a verificar antes de dar el resultado por ausente.
+
+`diagnostics.deterministicReads` lista las lecturas añadidas por el servidor. Las herramientas de lectura comparten código con Cliente existente, por lo que esta lógica vive solo en el pipeline de Coach.
+
 ## Validación
 
 - `coach-block-pipeline.test.js`: planificación, herramientas inventadas, alcance, lectura adicional, errores, ceros, guía, auditoría y límites.

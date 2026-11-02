@@ -8,6 +8,10 @@ import {
 } from "../src/coach/block-runtime.js";
 import { completeAnswerFromFacts } from "../src/coach/answer-completion.js";
 import {
+  pruneEmptySearches,
+  reinforceCoachReads,
+} from "../src/coach/deterministic-reads.js";
+import {
   COACH_AUDIT_UNAVAILABLE_ANSWER,
   COACH_FORMAT_FAILURE_ANSWER,
   COACH_NO_EVIDENCE_ANSWER,
@@ -32,6 +36,8 @@ function fixture({
   responseType = "informational",
   synthesize = null,
   failOnce = null,
+  effectiveContext = { accountId: 7 },
+  question = "¿Qué debo revisar?",
 } = {}) {
   const calls = [];
   let failed = false;
@@ -72,7 +78,7 @@ function fixture({
     result: reads[toolName] ?? [{ id: 7, name: "Cuenta" }],
   }));
   const prepareReadModel = vi.fn(async (input) => ({
-    effectiveContext: { accountId: 7 },
+    effectiveContext,
     scopedSnapshot: { accounts: [{ id: 7 }] },
     modelSnapshot: {},
     readToolResults: [],
@@ -96,7 +102,7 @@ function fixture({
     },
     trace,
     jobId: 9,
-    question: "¿Qué debo revisar?",
+    question,
     history,
     context: { accountId: 7 },
     coachIntentClassification,
@@ -667,6 +673,161 @@ describe("Coach: respuestas completas, reparación y reintentos", () => {
     expect(isRetryableCoachError(new Error("insufficient_quota"))).toBe(false);
     expect(isRetryableCoachError(new Error("otro"))).toBe(false);
     expect(isRetryableCoachError(null)).toBe(false);
+  });
+});
+
+describe("Coach: lectura por ID del registro identificado", () => {
+  const detailTools = [
+    "searchOpportunities",
+    "getOpportunity",
+    "getOpportunityActivities",
+    "getOpportunityReadiness",
+  ];
+  const sealpath = {
+    id: 121,
+    name: "Proteccion de Documentos Sealpath",
+    accountName: "Grupo Diestra",
+  };
+  const detailPlan = {
+    intent: "opportunity_query",
+    reads: [
+      {
+        toolName: "searchOpportunities",
+        filters: { text: "Protección de Documentos Sealpath de Grupo Diestra" },
+      },
+    ],
+  };
+  const readNames = (f) =>
+    f.executeReadTool.mock.calls.map(([call]) => call.toolName);
+
+  async function prepare(f, tools) {
+    const plan = await f.pipeline.hooks.classifyCoachIntentWithModel({
+      catalog: COACH_INTENT_CATALOG,
+    });
+    return f.pipeline.hooks.prepareReadModel({
+      availableTools: tools.map((name) => ({ name })),
+      intentRouting: { mode: plan.mode },
+    });
+  }
+
+  it("lee la oportunidad por ID aunque la búsqueda por texto no encuentre nada", async () => {
+    const f = fixture({
+      plan: detailPlan,
+      effectiveContext: { accountId: 163, opportunityId: 121 },
+      reads: {
+        searchOpportunities: [],
+        getOpportunity: sealpath,
+        getOpportunityActivities: [],
+      },
+    });
+    const model = await prepare(f, detailTools);
+    expect(readNames(f)).toEqual([
+      "searchOpportunities",
+      "getOpportunity",
+      "getOpportunityActivities",
+    ]);
+    expect(f.executeReadTool.mock.calls[1][0].args).toMatchObject({
+      opportunityId: 121,
+      accountId: 163,
+    });
+    expect(f.pipeline.diagnostics.deterministicReads).toEqual([
+      "getOpportunity",
+      "getOpportunityActivities",
+    ]);
+    // The empty text search must not reach the model next to the record that was found.
+    expect(model.readToolResults.map((item) => item.toolName)).toEqual([
+      "getOpportunity",
+      "getOpportunityActivities",
+    ]);
+  });
+
+  it("el detalle de una oportunidad identificada se responde con su evidencia", async () => {
+    const f = fixture({
+      plan: detailPlan,
+      effectiveContext: { accountId: 163, opportunityId: 121 },
+      reads: { searchOpportunities: [], getOpportunity: sealpath, getOpportunityActivities: [] },
+    });
+    const result = await run(f, detailTools);
+    expect(result.response.responseType).toBe("informational");
+    expect(f.pipeline.diagnostics.evidence.status).toBe("sufficient");
+  });
+
+  it("añade la preparación de etapa cuando la pregunta es de avance", async () => {
+    const f = fixture({
+      plan: detailPlan,
+      question: "¿Qué me falta para avanzar la oportunidad Sealpath a la siguiente etapa?",
+      effectiveContext: { accountId: 163, opportunityId: 121 },
+      reads: { getOpportunity: sealpath, getOpportunityActivities: [], getOpportunityReadiness: { id: 121 } },
+    });
+    await prepare(f, detailTools);
+    expect(readNames(f)).toContain("getOpportunityReadiness");
+  });
+
+  it("no añade lecturas que el canal no autoriza ni cuando no hay registro identificado", async () => {
+    const restricted = fixture({
+      plan: detailPlan,
+      effectiveContext: { accountId: 163, opportunityId: 121 },
+    });
+    await prepare(restricted, ["searchOpportunities"]);
+    expect(readNames(restricted)).toEqual(["searchOpportunities"]);
+    expect(restricted.pipeline.diagnostics.deterministicReads).toBeUndefined();
+
+    const unresolved = fixture({ plan: detailPlan, effectiveContext: { accountId: 163 } });
+    await prepare(unresolved, detailTools);
+    expect(readNames(unresolved)).toEqual(["searchOpportunities"]);
+  });
+
+  it("consulta la cuenta identificada por ID sin el texto del plan", async () => {
+    const f = fixture({
+      plan: {
+        intent: "account_query",
+        reads: [{ toolName: "searchAccounts", filters: { text: "frase que no coincide" } }],
+      },
+      effectiveContext: { accountId: 7 },
+    });
+    await prepare(f, ["searchAccounts"]);
+    expect(f.executeReadTool.mock.calls[0][0].args.text).toBeUndefined();
+    expect(f.executeReadTool.mock.calls[0][0].args.accountId).toBe(7);
+  });
+
+  it("si lo planeado no encontró nada pero hay un registro identificado, lo lee por ID antes de concluir que no existe", async () => {
+    const f = fixture({
+      plan: {
+        intent: "account_query",
+        reads: [{ toolName: "searchAccounts", filters: { text: "texto que no coincide" } }],
+      },
+      effectiveContext: { accountId: 163, opportunityId: 121 },
+      reads: { searchAccounts: [], getOpportunity: sealpath },
+      assessments: [{ status: "no_results", missingTools: [], missingFacts: [] }],
+    });
+    const result = await run(f, ["searchAccounts", "getOpportunity"]);
+    expect(readNames(f)).toEqual(["searchAccounts", "getOpportunity"]);
+    expect(f.calls.filter((call) => call.phase === "coach_evidence_assessment")).toHaveLength(2);
+    expect(result.response.responseType).toBe("informational");
+    expect(f.pipeline.diagnostics.deterministicReads).toEqual(["getOpportunity"]);
+  });
+
+  it("reinforceCoachReads deja margen para las lecturas adicionales del verificador", () => {
+    const planned = Array.from({ length: 6 }, (_, index) => ({
+      toolName: `tool${index}`,
+      filters: {},
+    }));
+    const { reads, added } = reinforceCoachReads({
+      plan: { intent: "opportunity_query", reads: planned },
+      effectiveContext: { opportunityId: 121 },
+      authorizedTools: detailTools.map((name) => ({ name })),
+      maxReads: 8,
+    });
+    expect(added).toEqual([]);
+    expect(reads).toHaveLength(6);
+  });
+
+  it("pruneEmptySearches solo retira búsquedas vacías cuando el registro se leyó por ID", () => {
+    const empty = { toolName: "searchOpportunities", result: [] };
+    const found = { toolName: "getOpportunity", result: { id: 1 } };
+    expect(pruneEmptySearches([empty, found])).toEqual([found]);
+    expect(pruneEmptySearches([empty])).toEqual([empty]);
+    expect(pruneEmptySearches([{ toolName: "searchOpportunities", result: null, error: "x" }, found])).toHaveLength(2);
   });
 });
 

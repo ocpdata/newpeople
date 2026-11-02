@@ -34,6 +34,12 @@ import {
 } from "./block-runtime.js";
 import { completeAnswerFromFacts } from "./answer-completion.js";
 import {
+  pruneEmptySearches,
+  reinforceCoachReads,
+  resolvedRecordTool,
+} from "./deterministic-reads.js";
+import { isStagePreparationQuestion } from "./stage-readiness.js";
+import {
   COACH_AUDIT_UNAVAILABLE_ANSWER,
   COACH_FORMAT_FAILURE_ANSWER,
   COACH_NO_EVIDENCE_ANSWER,
@@ -562,6 +568,35 @@ export function createCoachBlockPipeline({
         diagnostics.evidence.status = `sufficient_for_${turnMode}`;
         return null;
       }
+      // The server identified a record but the planned reads found nothing: read it by ID before concluding it is absent.
+      const byId = resolvedRecordTool({
+        effectiveContext: readModel.effectiveContext,
+        authorizedTools,
+      });
+      if (
+        result.status === "no_results" &&
+        !errors &&
+        !hasCoachEvidence(evidence) &&
+        byId &&
+        !evidence.some((item) => item.toolName === byId) &&
+        round < limits.maxEvidenceRounds &&
+        readCount < limits.maxReadQueries
+      ) {
+        diagnostics.deterministicReads = [
+          ...(diagnostics.deterministicReads || []),
+          byId,
+        ];
+        evidence.push(
+          await trace.span(
+            "B9",
+            "B7",
+            "Solicitar lectura adicional",
+            () => read(byId),
+            (value) => summarizeCoachEvidence([value])[0],
+          ),
+        );
+        continue;
+      }
       if (
         result.status === "no_results" &&
         hasReads &&
@@ -990,11 +1025,23 @@ export function createCoachBlockPipeline({
           !readModel.clarification &&
           input.intentRouting?.mode !== "deep_exploration"
         ) {
-          for (const item of plan?.reads || []) {
+          const { reads, added } = reinforceCoachReads({
+            plan,
+            question,
+            effectiveContext: readModel.effectiveContext,
+            authorizedTools,
+            isStagePreparationQuestion:
+              dependencies.isStagePreparationQuestion ||
+              isStagePreparationQuestion,
+            maxReads: limits.maxReadQueries,
+          });
+          if (added.length) diagnostics.deterministicReads = added;
+          for (const item of reads) {
             if (!authorizedTools.some((tool) => tool.name === item.toolName))
               continue;
             evidence.push(await read(item.toolName, item.filters));
           }
+          evidence = pruneEmptySearches(evidence);
         }
         readModel.readToolResults = evidence;
         readModel.modelSnapshot = {
