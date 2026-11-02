@@ -90,7 +90,8 @@ import {
   submitCoachTurnFeedback,
 } from "./coach/observability.js";
 import { recordCoachTurnQualityTrace } from "./coach/observability.js";
-import { readSellerPerformance } from "./coach/performance-tools.js";
+import { readSellerTool } from "./coach/performance-tools.js";
+import { buildCommissionTrackingPayload } from "./routes.commercial-planning.js";
 import {
   buildSellerLeaguePayload,
   listSellerQuarterOpenItems,
@@ -4554,11 +4555,13 @@ router.post(
       appendCoachSessionTurn,
       featureCode: MI_COACH_FEATURE_CODE,
       getAuthorizedCoachQuotationContent,
-      getSellerPerformance: ({ user: sellerUser }) =>
-        readSellerPerformance({
+      readSellerTool: ({ toolName, user: sellerUser }) =>
+        readSellerTool({
+          toolName,
           user: sellerUser,
           buildLeague: buildSellerLeaguePayload,
           listQuarterItems: listSellerQuarterOpenItems,
+          buildCommissionTracking: buildCommissionTrackingPayload,
           run: query,
         }),
     };

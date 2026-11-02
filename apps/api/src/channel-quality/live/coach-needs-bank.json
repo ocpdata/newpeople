@@ -247,14 +247,14 @@
           "mustInclude": [
             {
               "id": "pendientes",
-              "statement": "Propone acciones concretas apoyadas en actividades pendientes reales de referenceFacts.agenda.pendingActions.",
+              "statement": "Enumera acciones concretas de referenceFacts.agenda.pendingActions (vencidas primero), con su oportunidad.",
               "critical": true
             }
           ],
           "mustNotClaim": [
             {
               "id": "inventa",
-              "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
+              "statement": "Da cifras que contradicen referenceFacts. Las acciones vencidas de la agenda (agenda.overdueActions) y los vencidos de Ritmo comercial (me.overdue) son cifras distintas y ambas válidas."
             }
           ],
           "operations": "none",
@@ -448,7 +448,7 @@
           "mustInclude": [
             {
               "id": "tendencia",
-              "statement": "Compara con la semana anterior usando datos reales (oportunidades creadas {{me.opportunitiesCreatedLastWeek}} vs {{me.opportunitiesCreatedWeekBefore}}, o leads {{me.leadsLastWeek}} vs {{me.leadsWeekBefore}}) o dice claramente que no tiene historial.",
+              "statement": "Compara la última semana completa con la anterior usando oportunidades creadas ({{trend.lastWeekCreated}} vs {{trend.weekBeforeCreated}}), o dice que la semana en curso es parcial y compara solo semanas completas.",
               "critical": true
             }
           ],
@@ -503,8 +503,8 @@
           "question": "¿Cuánto llevo de comisión acumulada este trimestre?",
           "mustInclude": [
             {
-              "id": "honesto",
-              "statement": "Calcula la comisión con datos reales (porcentajes {{commission.productPct}}% productos, {{commission.servicePct}}% servicios, {{commission.renewalPct}}% renovaciones) o dice claramente que no puede calcularla.",
+              "id": "comision",
+              "statement": "Indica que la comisión acumulada es {{commission.totalAmount}} USD porque lo aceptado ({{commission.acceptedSales}} USD, {{commission.attainmentPct}}% de la cuota) no llega al 70% requerido; faltan {{commission.missingToEnable}} USD aceptados para habilitarla.",
               "critical": true
             }
           ],
@@ -531,8 +531,8 @@
           "question": "Si cierro {{focus.name}}, ¿cuánto ganaría de comisión?",
           "mustInclude": [
             {
-              "id": "honesto",
-              "statement": "Calcula la comisión con los porcentajes reales o dice claramente que no tiene el dato; no inventa un monto.",
+              "id": "explica",
+              "statement": "Explica que la comisión depende de cotizaciones aceptadas y que hoy no está habilitada (cumplimiento {{commission.attainmentPct}}%, se requiere 70%), sin inventar un monto exacto para esa oportunidad.",
               "critical": true
             }
           ],

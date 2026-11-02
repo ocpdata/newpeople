@@ -5,8 +5,8 @@ import {
   asksForOwnOpportunities,
   keepOwnOpportunities,
   keepOwnOpportunityList,
-  needsSellerPerformance,
   pipelineIsOwn,
+  sellerToolsFor,
 } from "./performance-tools.js";
 import { coachEvidenceSchema } from "./contract.js";
 import { aiModelFor } from "../ai-services/state.js";
@@ -325,10 +325,10 @@ export function createCoachBlockPipeline({
           }
           if (
             COACH_PERFORMANCE_TOOL_NAMES.includes(toolName) &&
-            typeof dependencies.getSellerPerformance === "function"
+            typeof dependencies.readSellerTool === "function"
           ) {
             const performance = await withCoachDeadline(
-              () => dependencies.getSellerPerformance({ user }),
+              () => dependencies.readSellerTool({ toolName, user }),
               deadlineAt,
             );
             return withCoachCounts({ toolName, readOnly: true, result: performance });
@@ -716,12 +716,15 @@ export function createCoachBlockPipeline({
           };
           if (
             classification.mode !== "deep_exploration" &&
-            classification.allowedTools.includes("getSellerPerformance") &&
-            needsSellerPerformance(question) &&
-            !plan.reads.some((item) => item.toolName === "getSellerPerformance")
+            pipelineIsOwn({ question, user })
           ) {
+            const missing = sellerToolsFor(question).filter(
+              (toolName) =>
+                classification.allowedTools.includes(toolName) &&
+                !plan.reads.some((item) => item.toolName === toolName),
+            );
             plan.reads = [
-              { toolName: "getSellerPerformance", filters: {} },
+              ...missing.map((toolName) => ({ toolName, filters: {} })),
               ...plan.reads,
             ];
           }
@@ -852,7 +855,7 @@ export function createCoachBlockPipeline({
               {
                 role: "system",
                 content:
-                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia y para totales de monto totalAmountUsd; no cuentes ni sumes registros a mano. Si la pregunta no trata del CRM, del desempeño comercial ni del proceso de ventas (cultura general, por ejemplo), no la respondas: indica que queda fuera del alcance de Coach. Si la evidencia trae getSellerPerformance, usa los nombres de sus labels («Pipeline abierto», «Pipeline del trimestre», «Pipeline del siguiente Q») y di brevemente qué cuenta cada uno según sus definitions; sus cifras son las mismas de Ritmo comercial. La brecha es la de la evidencia (cuota menos lo ganado); no la recalcules restando el pipeline y para la cobertura usa coverage. «Mis oportunidades» son las del vendedor que pregunta; si mencionas las de sus cuentas, aclara que son otras. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
+                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia y para totales de monto totalAmountUsd; no cuentes ni sumes registros a mano. Si la pregunta no trata del CRM, del desempeño comercial ni del proceso de ventas (cultura general, por ejemplo), no la respondas: indica que queda fuera del alcance de Coach. Si la evidencia trae getSellerPerformance, usa los nombres de sus labels («Pipeline abierto», «Pipeline del trimestre», «Pipeline del siguiente Q») y di brevemente qué cuenta cada uno según sus definitions; sus cifras son las mismas de Ritmo comercial. La brecha es la de la evidencia (cuota menos lo ganado); no la recalcules restando el pipeline y para la cobertura usa coverage. Si la evidencia trae getSellerAgenda, getSellerClosedDeals, getSellerTrend o getSellerCommission, usa sus cifras y definitions tal cual (tasa de cierre, ciclo, motivos de pérdida, vencidos, comparaciones); en la tendencia la semana en curso es parcial y no se compara con las completas. Si un dato no está en la evidencia, dilo en lugar de estimarlo. Si preguntan qué hacer hoy, esta semana o qué tienen pendiente, responde enumerando las acciones de getSellerAgenda.focus (vencidas primero, luego las de hoy y las de la semana), cada una con su oportunidad y fecha, sin resumir el pipeline ni quedarte en un conteo. «Mis oportunidades» son las del vendedor que pregunta; si mencionas las de sus cuentas, aclara que son otras. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
                   languageInstruction(requestedLanguage({ question, history })),
               },
               {

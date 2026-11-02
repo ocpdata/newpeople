@@ -274,7 +274,7 @@ async function buildCommissionConfigPayload(periodId) {
   return { period, sellers, configs };
 }
 
-async function buildCommissionTrackingPayload(periodId) {
+export async function buildCommissionTrackingPayload(periodId) {
   const commissionConfig = await buildCommissionConfigPayload(periodId);
   const { period, sellers } = commissionConfig;
   const { start, end } = getQuarterDateRange(period.year, period.quarter);

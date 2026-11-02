@@ -13,7 +13,7 @@ const round = (value, digits = 1) => Number(Number(value || 0).toFixed(digits));
 const last = (list) => (Array.isArray(list) && list.length ? Number(list[list.length - 1] || 0) : 0);
 const previous = (list) => (Array.isArray(list) && list.length > 1 ? Number(list[list.length - 2] || 0) : 0);
 
-export async function loadSellerNeedsFacts({ run, league, sellerId }) {
+export async function loadSellerNeedsFacts({ run, league, sellerId, commissionTracking = null }) {
   const rows = Array.isArray(league?.leaderboard) ? league.leaderboard : [];
   const me = rows.find((row) => Number(row.sellerUserId) === Number(sellerId));
   if (!me) throw new Error(`El vendedor ${sellerId} no aparece en Ritmo comercial.`);
@@ -51,8 +51,28 @@ export async function loadSellerNeedsFacts({ run, league, sellerId }) {
   const pending = await run(
     `SELECT a.title, a.due_date AS dueDate, o.name AS opportunity FROM opportunity_workspace_actions a
      JOIN opportunities o ON o.id = a.opportunity_id
-     WHERE o.seller_user_id = ? AND a.status = 'pending' ORDER BY a.due_date IS NULL, a.due_date LIMIT 6`,
+     JOIN opportunity_commercial_statuses cs ON cs.id = o.commercial_status_id
+     WHERE o.seller_user_id = ? AND cs.code = 'en_proceso' AND a.status IN ('pending', 'in_progress', 'blocked')
+     ORDER BY a.due_date IS NULL, a.due_date LIMIT 6`,
     [sellerId],
+  );
+  // Weeks run Monday to Sunday and are computed with the same local date the application uses.
+  const now = new Date();
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  const iso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const shift = (days) => iso(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + days));
+  const [weeks] = await run(
+    `SELECT SUM(DATE(created_at) >= ? AND DATE(created_at) < ?) AS lastWeek,
+            SUM(DATE(created_at) >= ? AND DATE(created_at) < ?) AS weekBefore
+     FROM opportunities WHERE seller_user_id = ?`,
+    [shift(-7), shift(0), shift(-14), shift(-7), sellerId],
+  );
+  const today = iso(now);
+  const [agendaCounts] = await run(
+    `SELECT SUM(a.due_date < ?) AS overdue, COUNT(*) AS total FROM opportunity_workspace_actions a
+     JOIN opportunities o ON o.id = a.opportunity_id JOIN opportunity_commercial_statuses cs ON cs.id = o.commercial_status_id
+     WHERE o.seller_user_id = ? AND cs.code = 'en_proceso' AND a.status IN ('pending', 'in_progress', 'blocked')`,
+    [today, sellerId],
   );
   const [created] = await run(
     `SELECT SUM(o.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS thisMonth,
@@ -99,11 +119,22 @@ export async function loadSellerNeedsFacts({ run, league, sellerId }) {
       avgCycleDays: round(closed.find((row) => row.status === "ganada")?.cycleDays, 0),
       lostReasons: lostReasons.map((row) => row.reason),
     },
-    agenda: { pendingActions: pending.map((row) => ({ title: row.title, dueDate: row.dueDate ? String(row.dueDate).slice(0, 10) : null, opportunity: row.opportunity })) },
+    agenda: { overdueActions: Number(agendaCounts?.overdue || 0), openActions: Number(agendaCounts?.total || 0), pendingActions: pending.map((row) => ({ title: row.title, dueDate: row.dueDate ? String(row.dueDate).slice(0, 10) : null, opportunity: row.opportunity })) },
+    trend: { lastWeekCreated: Number(weeks?.lastWeek || 0), weekBeforeCreated: Number(weeks?.weekBefore || 0) },
     created: { thisMonth: Number(created?.thisMonth || 0), lastMonth: Number(created?.lastMonth || 0) },
-    commission: commission
-      ? { productPct: Number(commission.productPct), servicePct: Number(commission.servicePct), renewalPct: Number(commission.renewalPct) }
-      : null,
+    commission: (() => {
+      const mine = (commissionTracking?.summaries || []).find((item) => Number(item.sellerUserId) === Number(sellerId));
+      if (!mine) return commission ? { productPct: Number(commission.productPct), servicePct: Number(commission.servicePct), renewalPct: Number(commission.renewalPct) } : null;
+      const quota = Number(mine.salesQuotaAmount || 0);
+      const required = Math.round(quota * 0.7);
+      return {
+        productPct: Number(mine.productCommissionPct), servicePct: Number(mine.serviceCommissionPct), renewalPct: Number(mine.renewalCommissionPct),
+        quotaAmount: quota, acceptedSales: Math.round(Number(mine.acceptedSalesAmount || 0)), attainmentPct: round(mine.quotaAttainmentPct, 1),
+        requiredToEnable: required, missingToEnable: Math.max(0, required - Math.round(Number(mine.acceptedSalesAmount || 0))),
+        enabled: Boolean(mine.commissionEnabled), totalAmount: Number(mine.calculatedTotalCommissionAmount || 0),
+        pendingAcceptance: (commissionTracking?.pendingQuotations || []).filter((item) => Number(item.sellerUserId) === Number(sellerId)).length,
+      };
+    })(),
     focus: focus ? { name: focus.name, account: focus.account, stage: focus.stage, amountUsd: Number(focus.amountUsd) } : null,
   };
 }

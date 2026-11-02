@@ -20,8 +20,8 @@ describe("banco de Coach con IA real", () => {
     const seller = {
       seller: { name: "Ana" }, quarter: { daysRemaining: 60 },
       me: { quotaUsd: 500000, wonUsd: 0, attainmentPct: 0, gapUsd: 500000, weeklyNeededUsd: 58000, rank: 5, pipelineWeightedUsd: 1, lowestScoreComponent: "discipline", overdue: 1, noNextStep: 4, opportunitiesCreatedLastWeek: 0, opportunitiesCreatedWeekBefore: 2, leadsLastWeek: 0, leadsWeekBefore: 1 },
-      team: { size: 5 }, closed: { lost: 7, won: 9, decided: 16, winRatePct: 56.3, avgCycleDays: 19 }, created: { thisMonth: 3, lastMonth: 2 },
-      commission: { productPct: 4, servicePct: 6, renewalPct: 2 }, focus: { name: "Vrf", account: "Totalplay", stage: "Contacto Inicial" },
+      team: { size: 5 }, closed: { lost: 7, won: 9, decided: 16, winRatePct: 56.3, avgCycleDays: 19 }, created: { thisMonth: 3, lastMonth: 2 }, trend: { lastWeekCreated: 1, weekBeforeCreated: 2 },
+      commission: { productPct: 4, servicePct: 6, renewalPct: 2, totalAmount: 0, acceptedSales: 0, attainmentPct: 0, missingToEnable: 350000 }, focus: { name: "Vrf", account: "Totalplay", stage: "Contacto Inicial" },
     };
     for (const scenario of needsBank.scenarios) expect(() => renderScenario(scenario, seller)).not.toThrow();
   });

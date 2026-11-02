@@ -191,9 +191,26 @@ Coach tiene la herramienta `getSellerPerformance` (`coach/performance-tools.js`)
 | Banco de necesidades (`--bank needs --as-user 5`) | Antes | Después |
 | --- | --- | --- |
 | Cuota, ritmo, cobertura, lugar, puntuación, vencidos y sin siguiente paso (N01–N08) | 0/8 | **8/8 en dos corridas seguidas** |
-| Las 19 preguntas | 0/19 | 7/19 (el resto necesita herramientas nuevas: agenda, cierres, tendencia, comisiones, cotizaciones y material) |
+| Las 19 preguntas | 0/19 | **14/19** |
 
-El banco de regresión de Coach quedó en 14/16 y 15/16 con los 5 críticos en todas las corridas con el proveedor estable. Las preguntas K01 y K05 se reformularon sin «mi» para el usuario administrador, porque «mi cartera» ahora significa las oportunidades donde él es el vendedor (el administrador no tiene abiertas). Las dos últimas corridas, ya con la nueva redacción de K05, no son válidas: el proveedor de IA devolvió `429 insufficient_quota`. Esa redacción está sin medir.
+### Agenda, cierres, tendencia y comisión (2026-11-01)
+
+Cuatro herramientas más de solo lectura, exclusivas de Coach, en `coach/performance-tools.js`. Todas leen las oportunidades donde el usuario es el vendedor.
+
+| Herramienta | Permiso | Qué entrega |
+| --- | --- | --- |
+| `getSellerAgenda` | `oportunidades.read` | Acciones pendientes de sus oportunidades abiertas y actividades del calendario; vencidas, de hoy, de la semana y una lista `focus` para responder «qué hago hoy». |
+| `getSellerClosedDeals` | `oportunidades.read` | Ganadas, perdidas y anuladas, tasa de cierre (las anuladas no cuentan), ciclo de venta promedio y motivos de pérdida recientes. |
+| `getSellerTrend` | `oportunidades.read` | Oportunidades creadas y ganadas por semana (lunes a domingo, la semana en curso marcada como parcial) y mes actual frente al anterior. |
+| `getSellerCommission` | `planeacion_comercial.read` | La fila **propia** del seguimiento de comisiones de Planeación comercial (`buildCommissionTrackingPayload`, ahora exportada): cuota, venta aceptada, cumplimiento frente al 70% requerido, cuánto falta para habilitarla, porcentajes, comisión calculada, cotizaciones elegibles o bloqueadas y ganadas sin aceptar. |
+
+Decisión de acceso (2026-11-01): las comisiones en Coach solo las ve quien tiene `planeacion_comercial.read` y solo la suya. Nunca se devuelven las de otros vendedores.
+
+**Tendencia que existe y la que falta.** Hay tendencia de oportunidades creadas y ganadas, que sale de las propias oportunidades. No existe historial de cuota, pipeline ni puntuación: para decir «tu pipeline bajó frente al mes pasado» haría falta guardar una foto semanal.
+
+**Pendiente en el banco de necesidades:** cotizaciones pendientes de respuesta (N13) y material de la biblioteca (N15) necesitan herramientas nuevas; N08, N09 y N10 alternan entre corridas. Con el proveedor estable, el banco de regresión de Coach dio 16/16 con los 5 críticos.
+
+Las preguntas K01 y K05 se reformularon sin «mi» para el usuario administrador, porque «mi cartera» ahora significa las oportunidades donde él es el vendedor (el administrador no tiene abiertas); con esa redacción el banco dio 16/16.
 
 ## Valoraciones de las respuestas
 

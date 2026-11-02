@@ -7,6 +7,7 @@ import { pool, query } from "../src/db.js";
 import express from "express";
 import { app } from "../src/app.js";
 import miAgentRoutes from "../src/routes.mi-agent.js";
+import { buildCommissionTrackingPayload } from "../src/routes.commercial-planning.js";
 import { getUserAuthContext } from "../src/auth.js";
 import { signToken } from "../src/utils.js";
 import { assertModelPriced } from "../src/customer-chat-acceptance/runner.js";
@@ -94,7 +95,12 @@ async function main() {
     const adminServer = await listen(app);
     servers.push(adminServer);
     const league = await (await fetch(`http://127.0.0.1:${adminServer.address().port}/api/commercial-tracking/seller-league-tv`, { headers: { authorization: `Bearer ${adminToken}` } })).json();
-    facts = await loadSellerNeedsFacts({ run: query, league, sellerId: actorId });
+    const [period] = await query(
+      "SELECT id FROM commercial_planning_periods WHERE plan_year = ? AND plan_quarter = ? ORDER BY id DESC LIMIT 1",
+      [league.quarterContext.current.year, league.quarterContext.current.quarter],
+    );
+    const commissionTracking = period ? await buildCommissionTrackingPayload(Number(period.id)) : null;
+    facts = await loadSellerNeedsFacts({ run: query, league, sellerId: actorId, commissionTracking });
     // The seller does not have Coach access in this database, so access is simulated for the run without changing any data.
     const actor = await getUserAuthContext(actorId);
     actor.permissionSet = new Set([...actor.permissionSet, "mi_coach.use"]);

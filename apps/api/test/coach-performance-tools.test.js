@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { COACH_PERFORMANCE_TOOLS, asksForOwnOpportunities, describeQuarterItems, pipelineIsOwn, keepOwnOpportunities, keepOwnOpportunityList, needsSellerPerformance, readSellerPerformance, shapeSellerPerformance } from "../src/coach/performance-tools.js";
+import { COACH_PERFORMANCE_TOOLS, sellerToolsFor, shapeCommission, loadSellerCommission, shapeAgenda, shapeClosedDeals, shapeTrend, readSellerTool, asksForOwnOpportunities, describeQuarterItems, pipelineIsOwn, keepOwnOpportunities, keepOwnOpportunityList, needsSellerPerformance, readSellerPerformance, shapeSellerPerformance } from "../src/coach/performance-tools.js";
 
 const row = (id, name, rank, score, extra = {}) => ({
   sellerUserId: id, sellerUserName: name, rankPosition: rank, scoreTotal: score, scoreClosing: 10, scoreBuild: 40, scoreDiscipline: 20,
@@ -14,7 +14,12 @@ const open = { count: 13, amountUsd: 362000 };
 
 describe("herramienta de desempeño del vendedor para Coach", () => {
   it("se declara de solo lectura con el permiso de Ritmo comercial", () => {
-    expect(COACH_PERFORMANCE_TOOLS).toEqual([expect.objectContaining({ name: "getSellerPerformance", requiredPermission: "ritmo_comercial.read", readOnly: true })]);
+    expect(COACH_PERFORMANCE_TOOLS.map((tool) => tool.name)).toEqual(["getSellerPerformance", "getSellerAgenda", "getSellerClosedDeals", "getSellerCommission", "getSellerTrend"]);
+    expect(COACH_PERFORMANCE_TOOLS.every((tool) => tool.readOnly === true)).toBe(true);
+    expect(COACH_PERFORMANCE_TOOLS[0]).toMatchObject({ requiredPermission: "ritmo_comercial.read" });
+    expect(Object.fromEntries(COACH_PERFORMANCE_TOOLS.map((tool) => [tool.name, tool.requiredPermission]))).toMatchObject({
+      getSellerAgenda: "oportunidades.read", getSellerClosedDeals: "oportunidades.read", getSellerTrend: "oportunidades.read", getSellerCommission: "planeacion_comercial.read",
+    });
   });
 
   it("entrega cuota, brecha, ritmo semanal y las dos definiciones de pipeline", () => {
@@ -109,5 +114,109 @@ describe("herramienta de desempeño del vendedor para Coach", () => {
     expect(pipelineIsOwn({ question: "¿Qué priorizo?", user: seller })).toBe(true);
     expect(pipelineIsOwn({ question: "¿Qué priorizo en el pipeline?", user: admin })).toBe(false);
     expect(pipelineIsOwn({ question: "¿Qué priorizo en mi pipeline?", user: admin })).toBe(true);
+  });
+
+  it("la agenda separa vencidas, de hoy y de esta semana", () => {
+    const agenda = shapeAgenda({
+      today: "2026-11-04",
+      actions: [
+        { title: "Llamar", dueDate: new Date(2026, 9, 19), opportunity: "A" },
+        { title: "Enviar", dueDate: "2026-11-04", opportunity: "B" },
+        { title: "Visitar", dueDate: "2026-11-08", opportunity: "C" },
+        { title: "Cotizar", dueDate: "2026-11-20", opportunity: "D" },
+        { title: "Sin fecha", dueDate: null, opportunity: "E" },
+      ],
+      calendar: [{ title: "Reunión", dueDate: "2026-11-05", scheduledAt: "2026-11-05T16:00:00Z" }],
+    });
+    expect(agenda.workspaceActions).toMatchObject({ open: 5, overdue: 1, dueToday: 1, dueThisWeek: 2, withoutDate: 1 });
+    expect(agenda.workspaceActions.items[0]).toMatchObject({ title: "Llamar", overdue: true });
+    expect(agenda.calendarActivities).toMatchObject({ open: 1, dueThisWeek: 1 });
+    expect(agenda.weekEnd).toBe("2026-11-08");
+  });
+
+  it("los cierres calculan tasa de cierre, ciclo y motivos sin contar las anuladas", () => {
+    const closed = shapeClosedDeals({
+      totals: [
+        { status: "ganada", count: 9, amount: "400000", cycleDays: "18.5556" },
+        { status: "perdida", count: 7, amount: "90000", cycleDays: null },
+        { status: "anulada", count: 7, amount: "10000", cycleDays: null },
+        { status: "en_proceso", count: 14, amount: "1", cycleDays: null },
+      ],
+      recentLost: [{ name: "X", account: "Y", status: "perdida", amountUsd: 5, closedAt: new Date(2026, 9, 1), reason: "Precio" }],
+    });
+    expect(closed).toMatchObject({ winRatePct: 56.3, decided: 16, won: { count: 9, averageCycleDays: 19 }, lost: { count: 7 }, cancelled: { count: 7 } });
+    expect(closed.recentLostOrCancelled[0]).toMatchObject({ reason: "Precio", closedAt: "2026-10-01" });
+    expect(shapeClosedDeals({ totals: [] }).winRatePct).toBeNull();
+  });
+
+  it("la tendencia compara semanas completas y meses, y marca la semana en curso como parcial", () => {
+    const trend = shapeTrend({
+      today: "2026-11-04",
+      opportunities: [
+        { createdAt: "2026-10-27", status: "en_proceso" },
+        { createdAt: "2026-10-28", status: "en_proceso" },
+        { createdAt: "2026-10-20", status: "ganada", closedAt: "2026-10-29", amountUsd: "1000" },
+        { createdAt: "2026-11-03", status: "en_proceso" },
+        { createdAt: "2026-10-05", status: "en_proceso" },
+      ],
+    });
+    const current = trend.weeklySeries.at(-1);
+    expect(current).toMatchObject({ weekStart: "2026-11-02", partial: true, created: 1 });
+    expect(trend.lastCompleteWeekVsPrevious).toMatchObject({ createdChange: 1, wonChange: 1 });
+    expect(trend.lastCompleteWeekVsPrevious.lastCompleteWeek).toMatchObject({ weekStart: "2026-10-26", created: 2, won: 1, wonAmountUsd: 1000 });
+    expect(trend.monthVsPrevious).toMatchObject({ currentMonth: { month: "2026-11", created: 1 }, previousMonth: { month: "2026-10", created: 4, won: 1 }, createdChange: -3 });
+  });
+
+  it("detecta qué herramientas del vendedor necesita cada pregunta", () => {
+    expect(sellerToolsFor("¿Qué debería hacer hoy?")).toEqual(["getSellerAgenda"]);
+    expect(sellerToolsFor("¿Por qué perdí mis últimas oportunidades?")).toEqual(["getSellerClosedDeals"]);
+    expect(sellerToolsFor("¿Voy mejor o peor que la semana pasada?")).toEqual(["getSellerTrend"]);
+    expect(sellerToolsFor("¿Cómo voy contra mi cuota?")).toEqual(["getSellerPerformance"]);
+    expect(sellerToolsFor("¿Cuál es la etapa de Vrf 2027?")).toEqual([]);
+  });
+
+  it("despacha cada herramienta y rechaza las desconocidas", async () => {
+    const run = vi.fn().mockResolvedValue([]);
+    const user = { id: 5, permissionSet: new Set() };
+    expect((await readSellerTool({ toolName: "getSellerClosedDeals", user, run })).entityType).toBe("seller_closed_deals");
+    expect((await readSellerTool({ toolName: "getSellerTrend", user, run })).entityType).toBe("seller_trend");
+    expect((await readSellerTool({ toolName: "getSellerAgenda", user, run })).entityType).toBe("seller_agenda");
+    expect(run.mock.calls.every(([sql, params]) => sql.includes("seller_user_id = ?") && params[0] === 5)).toBe(true);
+    await expect(readSellerTool({ toolName: "nope", user, run })).rejects.toThrow(/desconocida/);
+  });
+
+  it("la comisión es la fila del propio vendedor del seguimiento de Planeación comercial", () => {
+    const tracking = {
+      period: { year: 2026, quarter: 4 },
+      baseCurrencyCode: "USD",
+      summaries: [
+        { sellerUserId: 4, salesQuotaAmount: 500000, acceptedSalesAmount: 169882.21, quotaAttainmentPct: 33.98, commissionEnabled: false, productCommissionPct: 4, serviceCommissionPct: 6, renewalCommissionPct: 2,
+          acceptedQuotationCount: 1, eligibleQuotationCount: 0, blockedLowMarginQuotationCount: 0, blockedByQuotaQuotationCount: 1, calculatedTotalCommissionAmount: 0,
+          quotations: [{ proposalName: "P", accountName: "A", totalSaleAmount: 169882.21, quotationMarginPct: 22, passesMarginRule: true }] },
+        { sellerUserId: 9, salesQuotaAmount: 1, acceptedSalesAmount: 9999, quotaAttainmentPct: 100, commissionEnabled: true, calculatedTotalCommissionAmount: 777 },
+      ],
+      pendingQuotations: [{ sellerUserId: 4, proposalName: "Q", accountName: "B", totalSaleAmount: 100 }, { sellerUserId: 9, proposalName: "Z", totalSaleAmount: 5 }],
+    };
+    const mine = shapeCommission({ tracking, sellerId: 4 });
+    expect(mine).toMatchObject({
+      hasCommissionData: true, enabled: false,
+      quota: { amount: 500000, acceptedSales: 169882.21, attainmentPct: 33.98, requiredToEnable: 350000, missingToEnable: 180117.79 },
+      percentages: { products: 4, services: 6, renewals: 2 },
+      quotations: { accepted: 1, blockedByQuota: 1 }, commission: { total: 0 }, pendingAcceptance: { count: 1 },
+    });
+    expect(JSON.stringify(mine)).not.toMatch(/777|Z"/);
+    expect(mine.rules.join(" ")).toContain("70%");
+    expect(shapeCommission({ tracking, sellerId: 99 })).toMatchObject({ hasCommissionData: false });
+  });
+
+  it("busca el periodo del trimestre y, sin él, lo dice", async () => {
+    const withPeriod = vi.fn().mockResolvedValue([{ id: 4 }]);
+    const tracking = vi.fn().mockResolvedValue({ summaries: [], pendingQuotations: [] });
+    await loadSellerCommission({ run: withPeriod, sellerId: 5, buildCommissionTracking: tracking, now: new Date(2026, 10, 1) });
+    expect(withPeriod.mock.calls[0][1]).toEqual([2026, 4]);
+    expect(tracking).toHaveBeenCalledWith(4);
+    const none = await loadSellerCommission({ run: vi.fn().mockResolvedValue([]), sellerId: 5, buildCommissionTracking: tracking, now: new Date(2026, 10, 1) });
+    expect(none).toMatchObject({ hasCommissionData: false });
+    expect(sellerToolsFor("¿Cuánto llevo de comisión?")).toContain("getSellerCommission");
   });
 });
