@@ -206,6 +206,12 @@ describe("Coach B6–B10 pipeline", () => {
     ).toEqual([
       { toolName: "searchOpportunities", filters: { commercialStatusCodes: ["ganada", "en_proceso"], stageCodes: ["contacto_inicial"], openOnly: true } },
     ]);
+    expect(
+      normalizePlannedReads([{ toolName: "searchOpportunities", filters: { text: ["Alfa", " ", "Beta"], openOnly: true } }]),
+    ).toEqual([
+      { toolName: "searchOpportunities", filters: { text: "Alfa", openOnly: true } },
+      { toolName: "searchOpportunities", filters: { text: "Beta", openOnly: true } },
+    ]);
     expect(normalizePlannedReads(undefined)).toBeUndefined();
     expect(normalizePlannedReads([{ toolName: "x" }])).toEqual([{ toolName: "x" }]);
   });

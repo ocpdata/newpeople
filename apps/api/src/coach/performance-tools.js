@@ -147,9 +147,11 @@ export function shapeSellerPerformance({ league, sellerId, openPipeline, canSeeT
       quarterWeightedUsd: weighted,
       quarterWeightedCoversPct: gap > 0 ? round((weighted / gap) * 100, 1) : null,
       quarterWeightedCoversGap: gap > 0 ? weighted >= gap : true,
+      quarterAmountUsd: amount(me.funnelOpenAmountUsd),
+      quarterAmountCoversPct: gap > 0 ? round((Number(me.funnelOpenAmountUsd || 0) / gap) * 100, 1) : null,
       openPipelineUsd: openPipeline?.amountUsd ?? null,
       openPipelineCoversPct: gap > 0 && openPipeline ? round((openPipeline.amountUsd / gap) * 100, 1) : null,
-      note: "La brecha es cuota menos lo ya ganado; el pipeline no se resta de la cuota. Cobertura = pipeline ponderado entre brecha.",
+      note: "La brecha es cuota menos lo ya ganado; el pipeline no se resta de la cuota. quarterWeightedCoversPct es el pipeline PONDERADO entre la brecha y quarterAmountCoversPct es el monto SIN ponderar del pipeline del trimestre entre la brecha; no atribuyas uno al otro.",
     },
     ...(Array.isArray(quarterItems) ? { quarterOpportunities: describeQuarterItems(quarterItems) } : {}),
     nextQuarterPipelineUsd: amount(me.nextQuarterTimeWeightedOpenPipelineUsd ?? me.nextQuarterOpenPipelineUsd),
@@ -192,8 +194,11 @@ export function describeQuarterItems(items, today = todayIso()) {
   });
   return {
     count: described.length,
+    withoutNextStepCount: described.filter((item) => item.withoutNextStep).length,
     withoutNextStep: described.filter((item) => item.withoutNextStep).map((item) => item.name),
+    overdueCount: described.filter((item) => item.overdue).length,
     overdue: described.filter((item) => item.overdue).map((item) => ({ name: item.name, dueDate: item.nextStep.dueDate })),
+    note: "Sin siguiente paso y con siguiente paso vencido son grupos distintos: una oportunidad vencida SÍ tiene siguiente paso y no se cuenta en withoutNextStep.",
     items: described.slice(0, MAX_LISTED),
   };
 }

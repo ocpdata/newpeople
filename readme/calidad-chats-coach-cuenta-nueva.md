@@ -221,7 +221,15 @@ Se corrigió además que el planificador a veces devolvía la cadena `"null"` co
 
 Banco de necesidades: N13 y N15 pasan (se agregaron hechos independientes de referencia: conteo de cotizaciones por estado desde SQL y títulos de la biblioteca). El vendedor de prueba no tiene `enablement_comercial.use` en la base de desarrollo, así que el script lo simula igual que `mi_coach.use` (`--without-library` apaga esa simulación). Banco de regresión de Coach: 16/16 con los 5 críticos.
 
-**Pendiente en el banco de necesidades:** N05, N07, N09 y N10 alternan entre corridas por el criterio «inventa» del evaluador.
+### Estabilización del banco de necesidades (2026-11-02)
+
+Las fallas que alternaban eran errores reales del modelo, no del evaluador, y se corrigieron en la herramienta y en el prompt:
+- La cobertura mezclaba el pipeline ponderado con el monto del trimestre: `coverage` ahora trae `quarterWeightedCoversPct` y `quarterAmountCoversPct` por separado, con una nota que prohíbe atribuir uno al otro.
+- «Sin siguiente paso» y «vencidas» se mezclaban (5 en lugar de 4): `quarterOpportunities` trae `withoutNextStepCount`, `overdueCount` y una nota, y el prompt los trata como grupos distintos.
+- En preguntas de ganadas o perdidas, Coach ya no comenta oportunidades abiertas.
+- El planificador a veces devolvía varios nombres en un solo `filters.text` (un arreglo) y el plan se descartaba con una aclaración (N19); ahora cada nombre es una lectura.
+
+Resultado: banco de necesidades 19/19, 18/19, 19/19 y 18/19 en cuatro corridas completas; la falla restante cambia de escenario en cada corrida. Regresión de Coach 15/16 con los 5 críticos (K04, K05 y K15 alternan por proveedor y variación del modelo).
 
 Las preguntas K01 y K05 se reformularon sin «mi» para el usuario administrador, porque «mi cartera» ahora significa las oportunidades donde él es el vendedor (el administrador no tiene abiertas); con esa redacción el banco dio 16/16.
 

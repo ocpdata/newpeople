@@ -102,7 +102,7 @@ describe("herramienta de desempeño del vendedor para Coach", () => {
       { name: "C", accountName: "Z", amountUsd: 7, closeDate: "2026-12-15", nextStep: null },
     ];
     const described = describeQuarterItems(items, "2026-11-01");
-    expect(described).toMatchObject({ count: 3, withoutNextStep: ["C"], overdue: [{ name: "A", dueDate: "2026-10-20" }] });
+    expect(described).toMatchObject({ count: 3, withoutNextStepCount: 1, overdueCount: 1, withoutNextStep: ["C"], overdue: [{ name: "A", dueDate: "2026-10-20" }] });
     expect(described.items[2]).toMatchObject({ withoutNextStep: true, overdue: false, nextStep: null });
     const result = shapeSellerPerformance({ league, sellerId: 5, openPipeline: open, quarterItems: items });
     expect(result.quarterOpportunities.count).toBe(3);
