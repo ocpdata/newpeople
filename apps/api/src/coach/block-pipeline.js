@@ -23,13 +23,25 @@ import {
 import { executeCoachReadTool } from "./crm-read-tools.js";
 import {
   COACH_BLOCK_LIMITS,
+  COACH_RETRY_MIN_WINDOW_MS,
   buildCoachEvidenceFacts,
   coachBlockFailure,
   hasCoachEvidence,
   serializeCoachDates,
   summarizeCoachEvidence,
   withCoachDeadline,
+  withCoachRetry,
 } from "./block-runtime.js";
+import { completeAnswerFromFacts } from "./answer-completion.js";
+import {
+  COACH_AUDIT_UNAVAILABLE_ANSWER,
+  COACH_FORMAT_FAILURE_ANSWER,
+  COACH_NO_EVIDENCE_ANSWER,
+  COACH_PLAN_INVALID_ANSWER,
+  COACH_RESPONSE_FAILED_ANSWER,
+  COACH_UNSUPPORTED_ANSWER,
+  coachFailureAnswerFor,
+} from "./failure-messages.js";
 
 const filtersSchema = z
   .object({
@@ -78,7 +90,7 @@ export function operationNotPrepared(question, mode, readsFoundNothing = false) 
   if (mode !== "operation") {
     return readsFoundNothing
       ? "No encontré ningún registro que coincida con tu solicitud entre los que puedes consultar. Confirma el nombre de la cuenta, oportunidad o contacto."
-      : "La evidencia autorizada no cubre la solicitud. Precisa el dato o registro necesario para continuar.";
+      : COACH_NO_EVIDENCE_ANSWER;
   }
   const normalized = String(question || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   return CLOSING_REQUEST.test(normalized)
@@ -291,21 +303,50 @@ export function createCoachBlockPipeline({
     }
     return administrativeRules;
   };
+  const recordRetry = (phase) => (error) => {
+    diagnostics.retries = [...(diagnostics.retries || []), phase];
+    trace.record({
+      from: "B5",
+      to: "B5",
+      label: "Reintento tras un fallo transitorio",
+      phase: "call",
+      status: "started",
+      input: { phase, errorCode: String(error?.name || "provider_error") },
+    });
+  };
   const requestJson = (payload, phase) =>
-    withCoachDeadline(
+    withCoachRetry(
       () =>
-        dependencies.requestMiAgentJson({
-          payload,
-          user,
-          jobId,
-          phase,
-          startedAt: new Date(),
-          featureCode: coachFeatureCode,
-          jobType: "mi_coach_chat",
+        withCoachDeadline(
+          () =>
+            dependencies.requestMiAgentJson({
+              payload,
+              user,
+              jobId,
+              phase,
+              startedAt: new Date(),
+              featureCode: coachFeatureCode,
+              jobType: "mi_coach_chat",
+              deadlineAt,
+            }),
           deadlineAt,
-        }),
-      deadlineAt,
+        ),
+      { deadlineAt, onRetry: recordRetry(phase) },
     );
+  // A reply that does not fit its schema is retried once, like a provider failure.
+  const requestStructured = async (payload, phase, schema) => {
+    try {
+      return schema.parse(await requestJson(payload, phase));
+    } catch (error) {
+      if (
+        error?.name !== "ZodError" ||
+        deadlineAt - Date.now() < COACH_RETRY_MIN_WINDOW_MS
+      )
+        throw error;
+      recordRetry(phase)(error);
+      return schema.parse(await requestJson(payload, phase));
+    }
+  };
 
   const read = async (toolName, filters = {}) => {
     if (!authorizedTools.some((tool) => tool.name === toolName))
@@ -451,9 +492,8 @@ export function createCoachBlockPipeline({
         "B9",
         "Verificar evidencia de Coach",
         async () =>
-          assessmentSchema.parse(
-            await requestJson(
-              structuredPayload(
+          requestStructured(
+            structuredPayload(
                 'Evalúa suficiencia de evidencia para la solicitud de Coach. No redactes la respuesta. Separa hechos CRM, orientación comercial sustentada en processGuide/reglas y campos pendientes de propuestas. No exijas registros CRM para explicar una guía autorizada. El historial resuelve intención, no prueba hechos. Fecha/hora de una operación futura son campos por completar, no missingFacts CRM. No conviertas errores ni fuentes truncadas en ausencia. sufficient requiere cobertura de los hechos necesarios; no_results exige lecturas realizadas sin error. Solicita solo missingTools de availableTools y únicamente si aportan hechos solicitados. Para referencias ambiguas usa clarification. JSON: {status:sufficient|no_results|incomplete|clarification,missingTools:[],missingFacts:[],clarificationQuestion:""}.',
                 {
                   question,
@@ -469,8 +509,8 @@ export function createCoachBlockPipeline({
                 },
                 coachFeatureCode,
               ),
-              "coach_evidence_assessment",
-            ),
+            "coach_evidence_assessment",
+            assessmentSchema,
           ),
         (value) => ({
           status: value.status,
@@ -544,7 +584,7 @@ export function createCoachBlockPipeline({
           : "insufficient_evidence";
         return coachBlockFailure(
           errors
-            ? "No pude verificar la solicitud porque una fuente falló o quedó limitada. No interpretaré el fallo como ausencia de registros."
+            ? "No pude verificar la solicitud porque una fuente de datos falló o quedó incompleta, y no voy a interpretarlo como ausencia de registros. Inténtalo de nuevo; si se repite, acota la pregunta a una cuenta, una oportunidad o un periodo."
             : operationNotPrepared(
                 question,
                 readModel?.intentRouting?.mode || plan?.mode,
@@ -569,7 +609,107 @@ export function createCoachBlockPipeline({
         );
       }
     }
-    return coachBlockFailure("No fue posible verificar la evidencia de Coach.");
+    return coachBlockFailure(COACH_RESPONSE_FAILED_ANSWER);
+  };
+
+  // Kept for the single repair attempt that follows a rejected audit.
+  let normalizeTurnResponse = null;
+  let normalizeArgs = null;
+  let lastSynthesis = null;
+  let repairAttempted = false;
+
+  const runAnswerAudit = (candidate, activeContext) =>
+    trace.span(
+      "B10",
+      "B9",
+      "Auditar respuesta final de Coach",
+      async () =>
+        requestStructured(
+          structuredPayload(
+            "Audita la respuesta final de Coach. Verifica afirmaciones CRM únicamente contra authorizedEvidence; la guía y las reglas sustentan orientación de coaching, no datos de clientes. El historial y los IDs mencionados por el usuario no prueban hechos. Las operaciones son propuestas editables, nunca ejecución. No exijas disponibilidad ni datos futuros como hechos para proponer una operación. Valida identidad y vínculos de entidades con fuentes autorizadas. Un resultado vacío solo sustenta ausencia en el alcance de la lectura realizada, nunca ausencia global. Marca supported solo si todas las afirmaciones están respaldadas o claramente identificadas como recomendaciones/hipótesis. Si no puedes decidir usa inconclusive. No autorices escrituras. JSON:{status:supported|unsupported|inconclusive,unsupportedClaims:[]}.",
+            {
+              question,
+              history,
+              context: activeContext,
+              plan,
+              processGuide: guide,
+              businessRules,
+              administrativeRules,
+              authorizedEvidence: evidence,
+              proposedAnswer: candidate,
+              evidenceVerification: diagnostics.evidence,
+            },
+            coachFeatureCode,
+          ),
+          "coach_answer_audit",
+          auditSchema,
+        ),
+      (value) => ({
+        status: value.status,
+        unsupportedClaimsCount: value.unsupportedClaims.length,
+      }),
+    );
+
+  // One rewrite that drops what the audit could not support. Operation turns are not rewritten: their text is tied to
+  // proposals that went through the channel policy.
+  const repairAnswer = async (current, unsupportedClaims) => {
+    if (
+      repairAttempted ||
+      !lastSynthesis ||
+      !normalizeTurnResponse ||
+      !normalizeArgs ||
+      current.operations?.length ||
+      (readModel?.intentRouting?.mode || plan?.mode) === "operation" ||
+      deadlineAt - Date.now() < COACH_RETRY_MIN_WINDOW_MS
+    )
+      return null;
+    repairAttempted = true;
+    const source = await trace.span(
+      "B10",
+      "B5",
+      "Corregir respuesta de Coach",
+      () =>
+        requestJson(
+          {
+            ...lastSynthesis.payload,
+            input: [
+              ...lastSynthesis.payload.input,
+              {
+                role: "system",
+                content: `La auditoría rechazó estas afirmaciones por no estar respaldadas por la evidencia autorizada: ${JSON.stringify(unsupportedClaims.slice(0, 6))}. Reescribe la respuesta completa en el mismo formato JSON: conserva solo lo que consta en verifiedEvidence, presenta como recomendación o hipótesis lo que no sea un hecho y, si el registro pedido no aparece en la evidencia, dilo con claridad sin inventar datos ni cifras.`,
+              },
+            ],
+          },
+          lastSynthesis.phase,
+        ),
+      (value) => ({ hasAnswer: Boolean(value?.answer) }),
+    );
+    const normalized = normalizeTurnResponse(
+      {
+        ...source,
+        toolCalls: [],
+        tool_calls: [],
+        requestedTools: [],
+        readToolCalls: [],
+      },
+      ...normalizeArgs,
+    );
+    if (
+      !String(normalized?.answer || "").trim() ||
+      ["error", "clarification", "handoff"].includes(normalized.responseType)
+    )
+      return null;
+    // The envelope (entities, routing, context) comes from the original turn; only the content is replaced.
+    return {
+      ...current,
+      answer: normalized.answer,
+      facts: normalized.facts,
+      evidence: normalized.evidence,
+      inferences: normalized.inferences,
+      recommendation: normalized.recommendation,
+      pendingItems: normalized.pendingItems,
+      operations: [],
+    };
   };
 
   return {
@@ -587,7 +727,8 @@ export function createCoachBlockPipeline({
         }
         return prompt;
       },
-      normalizeResponse: (source, ...args) => {
+      normalizeResponse: (normalizeTurnResponse = (source, ...args) => {
+        normalizeArgs = args;
         const modelFacts = (Array.isArray(source?.facts) ? source.facts : [])
           .map((fact) =>
             coachEvidenceSchema.safeParse({
@@ -635,15 +776,13 @@ export function createCoachBlockPipeline({
         ) {
           diagnostics.responseContract.status = "invalid";
           return {
-            ...coachBlockFailure(
-              "No fue posible validar el formato de la respuesta de Coach. No se ejecutó ninguna operación.",
-            ),
+            ...coachBlockFailure(COACH_FORMAT_FAILURE_ANSWER),
             entities: normalized.entities,
           };
         }
         diagnostics.responseContract.status = "valid";
         return normalized;
-      },
+      }),
       classifyCoachIntentWithModel: async ({ catalog }) => {
         try {
           const finalIntent =
@@ -900,7 +1039,7 @@ export function createCoachBlockPipeline({
         try {
           if (diagnostics.planner?.status !== "valid")
             return coachBlockFailure(
-              "No fue posible validar el plan de Coach. Reformula la pregunta o inténtalo de nuevo.",
+              COACH_PLAN_INVALID_ANSWER,
               "clarification",
               ["Plan de consulta válido"],
             );
@@ -970,6 +1109,7 @@ export function createCoachBlockPipeline({
               proposedOperations: value.operations?.length || 0,
             }),
           );
+          lastSynthesis = { payload, phase };
           return {
             ...response,
             toolCalls: [],
@@ -983,9 +1123,7 @@ export function createCoachBlockPipeline({
             status: "error",
             errorCode: error.code || "coach_response_failed",
           };
-          return coachBlockFailure(
-            "No fue posible verificar y formar la respuesta de Coach. Inténtalo de nuevo.",
-          );
+          return coachBlockFailure(coachFailureAnswerFor(error));
         }
       },
       getTurnDiagnostics: () => ({
@@ -1004,7 +1142,7 @@ export function createCoachBlockPipeline({
         if (diagnostics.planner?.status !== "valid") {
           result.response = {
             ...coachBlockFailure(
-              "No fue posible validar el plan de Coach. No se consultarán ni afirmarán datos sin esa validación.",
+              COACH_PLAN_INVALID_ANSWER,
               "clarification",
             ),
             entities: response.entities,
@@ -1030,48 +1168,55 @@ export function createCoachBlockPipeline({
             return result;
           }
         }
-        const audit = await trace.span(
-          "B10",
-          "B9",
-          "Auditar respuesta final de Coach",
-          async () =>
-            auditSchema.parse(
-              await requestJson(
-                structuredPayload(
-                  "Audita la respuesta final de Coach. Verifica afirmaciones CRM únicamente contra authorizedEvidence; la guía y las reglas sustentan orientación de coaching, no datos de clientes. El historial y los IDs mencionados por el usuario no prueban hechos. Las operaciones son propuestas editables, nunca ejecución. No exijas disponibilidad ni datos futuros como hechos para proponer una operación. Valida identidad y vínculos de entidades con fuentes autorizadas. Un resultado vacío solo sustenta ausencia en el alcance de la lectura realizada, nunca ausencia global. Marca supported solo si todas las afirmaciones están respaldadas o claramente identificadas como recomendaciones/hipótesis. Si no puedes decidir usa inconclusive. No autorices escrituras. JSON:{status:supported|unsupported|inconclusive,unsupportedClaims:[]}.",
-                  {
-                    question,
-                    history,
-                    context: result.activeContext,
-                    plan,
-                    processGuide: guide,
-                    businessRules,
-                    administrativeRules,
-                    authorizedEvidence: evidence,
-                    proposedAnswer: response,
-                    evidenceVerification: diagnostics.evidence,
-                  },
-                  coachFeatureCode,
-                ),
-                "coach_answer_audit",
-              ),
-            ),
-          (value) => ({
-            status: value.status,
-            unsupportedClaimsCount: value.unsupportedClaims.length,
-          }),
-        );
+        // An announced list is completed before auditing, so the audit sees the text the seller will read.
+        const completion = completeAnswerFromFacts(response);
+        let finalResponse = completion.response;
+        if (completion.completed) {
+          result.response = finalResponse;
+          trace.record({
+            from: "B10",
+            to: "B10",
+            label: "Completar respuesta con los hechos verificados",
+            phase: "return",
+            status: "completed",
+            output: { items: completion.completed },
+          });
+        }
+        let audit = await runAnswerAudit(finalResponse, result.activeContext);
+        const auditFailed = (value) =>
+          value.status !== "supported" || value.unsupportedClaims.length > 0;
+        // Without a single CRM record behind it, an unsupported answer to a general question is out of scope.
+        const outOfScope =
+          plan?.intent === "general_query" && !hasCoachEvidence(evidence);
+        let repaired = false;
+        if (auditFailed(audit) && !outOfScope) {
+          const candidate = await repairAnswer(
+            finalResponse,
+            audit.unsupportedClaims,
+          ).catch(() => null);
+          const second = candidate
+            ? await runAnswerAudit(candidate, result.activeContext).catch(
+                () => null,
+              )
+            : null;
+          if (second && !auditFailed(second)) {
+            audit = second;
+            finalResponse = candidate;
+            result.response = candidate;
+            repaired = true;
+          }
+          if (repairAttempted)
+            diagnostics.repair = {
+              attempted: true,
+              outcome: repaired ? "repaired" : "still_unsupported",
+            };
+        }
         diagnostics.answerAudit = audit;
-        if (audit.status !== "supported" || audit.unsupportedClaims.length) {
-          // Without a single CRM record behind it, an unsupported answer to a general question is out of scope.
-          const outOfScope =
-            plan?.intent === "general_query" && !hasCoachEvidence(evidence);
+        if (auditFailed(audit)) {
           result.response = {
             ...(outOfScope
               ? coachBlockFailure(COACH_OUT_OF_SCOPE_ANSWER, "clarification")
-              : coachBlockFailure(
-                  "No pude respaldar la respuesta con las fuentes autorizadas. No presentaré hechos ni operaciones sin esa validación.",
-                )),
+              : coachBlockFailure(COACH_UNSUPPORTED_ANSWER)),
             entities: response.entities,
           };
           result.qualityTrace = {
@@ -1081,15 +1226,23 @@ export function createCoachBlockPipeline({
             operationsRejected: response.operations?.length || 0,
           };
         } else {
+          if (repaired)
+            result.qualityTrace = {
+              ...result.qualityTrace,
+              validationReasons: [
+                ...(result.qualityTrace?.validationReasons || []),
+                "coach_answer_repaired",
+              ],
+            };
           result.response.operations = applyCoachOperationPolicy(
-            response.operations || [],
+            finalResponse.operations || [],
             businessRules.operationPolicy,
           );
           // The channel policy decides which operations Coach may propose; a text that "proposes" one it cannot
           // carry would leave the seller waiting for something to confirm that does not exist.
           if (
             (readModel?.intentRouting?.mode || plan?.mode) === "operation" &&
-            response.responseType === "action_proposal" &&
+            finalResponse.responseType === "action_proposal" &&
             !result.response.operations.length
           ) {
             result.response = {
@@ -1115,7 +1268,9 @@ export function createCoachBlockPipeline({
         };
         result.response = {
           ...coachBlockFailure(
-            "No fue posible auditar la respuesta de Coach. No se ejecutó ninguna operación.",
+            error?.code === "coach_turn_timeout"
+              ? coachFailureAnswerFor(error)
+              : COACH_AUDIT_UNAVAILABLE_ANSWER,
           ),
           entities: response.entities,
         };

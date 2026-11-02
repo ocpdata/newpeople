@@ -94,6 +94,41 @@ export async function withCoachDeadline(work, deadlineAt) {
   }
 }
 
+// A provider hiccup or a reply that does not fit the expected JSON is worth one more attempt; quota rejections,
+// timeouts of the turn and logic errors are not.
+const TRANSIENT_PROVIDER_ERROR =
+  /\bHTTP (?:5\d\d|429)\b|no tuvo un formato válido|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|overloaded/i;
+const PROVIDER_QUOTA_ERROR =
+  /insufficient_quota|spend_limit_exceeded|billing_hard_limit|credit_balance_exhausted|quota/i;
+// A retry needs room for the call itself plus the blocks that still follow it.
+export const COACH_RETRY_MIN_WINDOW_MS = 10000;
+
+export function isRetryableCoachError(error) {
+  if (!error || error.code === "coach_turn_timeout") return false;
+  if (error.name === "ZodError") return true;
+  const message = String(error.message || "");
+  return (
+    TRANSIENT_PROVIDER_ERROR.test(message) && !PROVIDER_QUOTA_ERROR.test(message)
+  );
+}
+
+export async function withCoachRetry(
+  work,
+  { deadlineAt, minWindowMs = COACH_RETRY_MIN_WINDOW_MS, onRetry } = {},
+) {
+  try {
+    return await work();
+  } catch (error) {
+    if (
+      !isRetryableCoachError(error) ||
+      deadlineAt - Date.now() < minWindowMs
+    )
+      throw error;
+    onRetry?.(error);
+    return work();
+  }
+}
+
 export function summarizeCoachEvidence(results = []) {
   return results.map((item) => ({
     toolName: item.toolName,

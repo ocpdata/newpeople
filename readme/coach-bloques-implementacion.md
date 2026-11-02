@@ -48,6 +48,13 @@ El turno dispone de 45 segundos para llamadas de los bloques, hasta 8 lecturas y
 
 `result.coachArchitecture` contiene versión `coach_blocks_v1`, canal, planificación, dictamen de evidencia, auditoría y `executionTrace`. La observabilidad del job conserva también los eventos B2–B11, con secuencia, llamada/retorno, tiempos y conteos saneados. Las trazas no incluyen filas CRM, prompts, credenciales ni historial completo. No se modifica el renderer del chat para mostrar estas trazas.
 
+## Respuestas completas, reparación y reintentos
+
+- **Lista anunciada y no entregada:** si el texto termina en dos puntos y la respuesta trae hechos verificados, el servidor los añade como lista antes de auditar. La auditoría revisa el texto que lee el vendedor.
+- **Reparación:** cuando la auditoría rechaza una respuesta, Coach hace **una** reescritura que conserva solo lo respaldado por la evidencia y la audita de nuevo. Si la nueva auditoría la acepta, se entrega y el turno registra `coach_answer_repaired`; si no, se entrega el mensaje de fallo. No se reescriben turnos de operación ni preguntas fuera de alcance, y solo se intenta si quedan al menos 10 segundos del turno. `diagnostics.repair` conserva el resultado.
+- **Reintentos:** una llamada al proveedor que falla por un error transitorio (HTTP 5xx o 429 que no sea de cuota, red, respuesta que no es JSON válido) se repite una vez si queda tiempo. También se repite una vez la verificación o auditoría cuya respuesta no cumple su esquema. Los rechazos por cuota y el vencimiento del turno no se reintentan. Los reintentos se anotan en la traza y en `diagnostics.retries`.
+- **Mensajes de fallo:** cada fallo dice qué ocurrió y qué intentar a continuación (`failure-messages.js`). Una pregunta sin respaldo del CRM sigue respondiéndose como fuera de alcance, no como error.
+
 ## Validación
 
 - `coach-block-pipeline.test.js`: planificación, herramientas inventadas, alcance, lectura adicional, errores, ceros, guía, auditoría y límites.
