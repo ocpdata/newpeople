@@ -191,7 +191,7 @@ Coach tiene la herramienta `getSellerPerformance` (`coach/performance-tools.js`)
 | Banco de necesidades (`--bank needs --as-user 5`) | Antes | Después |
 | --- | --- | --- |
 | Cuota, ritmo, cobertura, lugar, puntuación, vencidos y sin siguiente paso (N01–N08) | 0/8 | **8/8 en dos corridas seguidas** |
-| Las 19 preguntas | 0/19 | **14/19** |
+| Las 19 preguntas | 0/19 | **16/19** (N13 y N15 ya pasan; N05, N07, N09 y N10 alternan entre corridas) |
 
 ### Agenda, cierres, tendencia y comisión (2026-11-01)
 
@@ -208,7 +208,20 @@ Decisión de acceso (2026-11-01): las comisiones en Coach solo las ve quien tien
 
 **Tendencia que existe y la que falta.** Hay tendencia de oportunidades creadas y ganadas, que sale de las propias oportunidades. No existe historial de cuota, pipeline ni puntuación: para decir «tu pipeline bajó frente al mes pasado» haría falta guardar una foto semanal.
 
-**Pendiente en el banco de necesidades:** cotizaciones pendientes de respuesta (N13) y material de la biblioteca (N15) necesitan herramientas nuevas; N08, N09 y N10 alternan entre corridas. Con el proveedor estable, el banco de regresión de Coach dio 16/16 con los 5 críticos.
+### Cotizaciones y biblioteca (2026-11-02)
+
+| Herramienta | Permiso | Qué entrega |
+| --- | --- | --- |
+| `getSellerQuotations` | `oportunidades.read` y algún `cotizaciones.*` (igual que `getOpportunityQuotation`) | La última versión de cada cotización de las oportunidades abiertas y activadas donde el usuario es el vendedor, agrupada por estado (enviada y pendiente de respuesta, en aprobación, aprobada sin enviar, ganada sin aceptar, borrador, rechazada), con vigencia calculada (`30_dias`; «según notas» no tiene fecha) y las que vencen en 7 días o menos. Muestra el monto de la oportunidad, no el de la cotización. |
+| `getLibraryMaterials` | `enablement_comercial.use` | Material activo de la Biblioteca de ventas que el usuario puede ver, ordenado por coincidencia con la pregunta y con la oportunidad en foco (título, fabricante, tecnología y etapa). Indica si es para cliente o solo interno. Si nada coincide lo dice y no inventa documentos. No busca dentro del texto de los documentos. |
+
+Sin permiso de biblioteca, Coach responde de forma determinista que la cuenta no tiene acceso a la Biblioteca de ventas (solo para peticiones directas de material; no para «qué material debo preparar»).
+
+Se corrigió además que el planificador a veces devolvía la cadena `"null"` como destino de detalle, lo que convertía una pregunta clara en una aclaración.
+
+Banco de necesidades: N13 y N15 pasan (se agregaron hechos independientes de referencia: conteo de cotizaciones por estado desde SQL y títulos de la biblioteca). El vendedor de prueba no tiene `enablement_comercial.use` en la base de desarrollo, así que el script lo simula igual que `mi_coach.use` (`--without-library` apaga esa simulación). Banco de regresión de Coach: 16/16 con los 5 críticos.
+
+**Pendiente en el banco de necesidades:** N05, N07, N09 y N10 alternan entre corridas por el criterio «inventa» del evaluador.
 
 Las preguntas K01 y K05 se reformularon sin «mi» para el usuario administrador, porque «mi cartera» ahora significa las oportunidades donde él es el vendedor (el administrador no tiene abiertas); con esa redacción el banco dio 16/16.
 

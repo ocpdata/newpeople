@@ -10,6 +10,8 @@ export const COACH_INTERACTION_MODES = Object.freeze([
 
 const COACHING_TOOLS = new Set([
   "getSellerPerformance",
+  "getSellerQuotations",
+  "getLibraryMaterials",
   "getSellerCommission",
   "getSellerAgenda",
   "getSellerClosedDeals",
@@ -58,6 +60,8 @@ export const COACH_INTENT_CATALOG = Object.freeze([
     requiredContext: [],
     tools: [
       "getSellerPerformance",
+      "getSellerQuotations",
+      "getLibraryMaterials",
       "getSellerCommission",
       "getSellerAgenda",
       "getSellerClosedDeals",

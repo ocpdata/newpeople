@@ -363,9 +363,13 @@
           "question": "¿Qué cotizaciones tengo pendientes de respuesta?",
           "mustInclude": [
             {
-              "id": "honesto",
-              "statement": "Informa cotizaciones reales o dice claramente que no tiene esa información; no responde con datos de otra cosa.",
+              "id": "cantidad",
+              "statement": "Indica cuántas cotizaciones están enviadas esperando respuesta (quotations.awaitingResponse de referenceFacts) y, si las lista, son oportunidades de quotations.awaitingResponseOpportunities.",
               "critical": true
+            },
+            {
+              "id": "detalle",
+              "statement": "Menciona al menos la oportunidad o la cuenta de una cotización pendiente, o dice cuántas hay por estado; no confunde cotizaciones con cuota, pipeline o comisión."
             }
           ],
           "mustNotClaim": [
@@ -420,7 +424,7 @@
           "mustInclude": [
             {
               "id": "honesto",
-              "statement": "Recomienda material concreto de la biblioteca comercial o dice claramente que no tiene acceso a ella; no inventa documentos.",
+              "statement": "Recomienda materiales cuyo título está en library.titles de referenceFacts, o dice claramente que no encontró material que coincida con ese contexto; no inventa documentos ni enlaces.",
               "critical": true
             }
           ],
@@ -428,6 +432,10 @@
             {
               "id": "inventa",
               "statement": "Da cifras de cuota, avance, brecha, pipeline abierto, pipeline del trimestre, vencidos, sin siguiente paso, lugar o puntuación que contradicen referenceFacts."
+            },
+            {
+              "id": "documento_inventado",
+              "statement": "Nombra un documento, presentación o caso de uso que no está en library.titles de referenceFacts."
             }
           ],
           "operations": "none",

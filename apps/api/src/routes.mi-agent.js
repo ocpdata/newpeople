@@ -91,6 +91,7 @@ import {
 } from "./coach/observability.js";
 import { recordCoachTurnQualityTrace } from "./coach/observability.js";
 import { readSellerTool } from "./coach/performance-tools.js";
+import { listCommercialEnablementAssets } from "./commercial-enablement/library-service.js";
 import { buildCommissionTrackingPayload } from "./routes.commercial-planning.js";
 import {
   buildSellerLeaguePayload,
@@ -4555,10 +4556,12 @@ router.post(
       appendCoachSessionTurn,
       featureCode: MI_COACH_FEATURE_CODE,
       getAuthorizedCoachQuotationContent,
-      readSellerTool: ({ toolName, user: sellerUser }) =>
+      readSellerTool: ({ toolName, user: sellerUser, context }) =>
         readSellerTool({
           toolName,
           user: sellerUser,
+          context,
+          listLibraryAssets: listCommercialEnablementAssets,
           buildLeague: buildSellerLeaguePayload,
           listQuarterItems: listSellerQuarterOpenItems,
           buildCommissionTracking: buildCommissionTrackingPayload,

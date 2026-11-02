@@ -32,6 +32,24 @@ export const COACH_PERFORMANCE_TOOLS = Object.freeze([
     readOnly: true,
   }),
   Object.freeze({
+    name: "getSellerQuotations",
+    description:
+      "Cotizaciones del vendedor que pregunta en sus oportunidades abiertas por estado (borrador, en aprobación, aprobada, enviada y pendiente de respuesta, ganada sin aceptar, rechazada), con su vigencia y las que vencen pronto.",
+    requiredPermission: "oportunidades.read",
+    requiredAnyPermissions: Object.freeze([
+      "cotizaciones.operacion", "cotizaciones.revision", "cotizaciones.ingreso", "cotizaciones.aprobacion_humana",
+      "cotizaciones.aprobacion_ia", "cotizaciones.administracion", "cotizaciones.externo",
+    ]),
+    readOnly: true,
+  }),
+  Object.freeze({
+    name: "getLibraryMaterials",
+    description:
+      "Material de la biblioteca de ventas (presentaciones, casos de uso, folletos) recomendado para la etapa, la oportunidad o el tema que pregunta el vendedor.",
+    requiredPermission: "enablement_comercial.use",
+    readOnly: true,
+  }),
+  Object.freeze({
     name: "getSellerTrend",
     description:
       "Tendencia del vendedor que pregunta: oportunidades creadas y ganadas por semana y por mes (semana y mes actuales frente a los anteriores).",
@@ -444,12 +462,14 @@ export async function loadSellerTrend({ run, sellerId, today = localIso(new Date
   return shapeTrend({ opportunities: rows, today });
 }
 
-export async function readSellerTool({ toolName, user, buildLeague, listQuarterItems = null, buildCommissionTracking = null, run }) {
+export async function readSellerTool({ toolName, user, buildLeague, listQuarterItems = null, buildCommissionTracking = null, listLibraryAssets = null, context = {}, run }) {
   const sellerId = Number(user?.id || 0);
   if (toolName === "getSellerPerformance") return readSellerPerformance({ user, buildLeague, listQuarterItems, run });
   if (toolName === "getSellerAgenda") return loadSellerAgenda({ run, sellerId });
   if (toolName === "getSellerClosedDeals") return loadSellerClosedDeals({ run, sellerId });
   if (toolName === "getSellerTrend") return loadSellerTrend({ run, sellerId });
+  if (toolName === "getSellerQuotations") return loadSellerQuotations({ run, sellerId });
+  if (toolName === "getLibraryMaterials") return loadLibraryMaterials({ user, listAssets: listLibraryAssets, question: context.question, opportunity: context.opportunity });
   if (toolName === "getSellerCommission") return loadSellerCommission({ run, sellerId, buildCommissionTracking });
   throw new Error(`Herramienta de vendedor desconocida: ${toolName}`);
 }
@@ -457,6 +477,8 @@ export async function readSellerTool({ toolName, user, buildLeague, listQuarterI
 const TOOL_QUESTION_PATTERNS = {
   getSellerAgenda: /\b(hoy|agenda|pendientes?|actividades|que (?:debo|debería|deberia) hacer|vencid[oa]s?|esta semana|proxim[oa]s? pasos?)\b/,
   getSellerClosedDeals: /\b(perdi|perdidas?|perdidos?|ganadas?|ganados?|tasa de cierre|ciclo de venta|cuanto tardo|motivos? de perdida|por que perdi)\b/,
+  getSellerQuotations: /\b(cotizaciones?|propuestas?)\b.*\b(pendientes?|respuesta|enviadas?|vigencia|vencen|vencidas?|por vencer|aprobacion|sin aceptar|abiertas?|tengo|tienen)\b/,
+  getLibraryMaterials: /\b(material|materiales|biblioteca|folletos?|brochures?|casos? de (?:exito|uso)|presentacion|presentaciones|que puedo (?:enviar|mandar|compartir)|que le (?:envio|mando))\b/,
   getSellerCommission: /\b(comision|comisiones|comisionar|cuanto gano|cuanto ganaria|cuanto voy a ganar)\b/,
   getSellerTrend: /\b(semana pasada|mes anterior|mes pasado|mejor o peor|tendencia|este mes|mensual|semanal|vs|frente al)\b/,
 };
@@ -530,4 +552,126 @@ export async function loadSellerCommission({ run, sellerId, buildCommissionTrack
   if (!rows[0]) return { entityType: "seller_commission", hasCommissionData: false, ...COMMISSION_RULES, note: "No hay un periodo de planeación para el trimestre actual." };
   const tracking = await buildCommissionTracking(Number(rows[0].id));
   return shapeCommission({ tracking, sellerId });
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Quotations by status and library materials.
+
+const QUOTATION_STATUS_LABELS = {
+  borrador: "Borrador", en_aprobacion: "En aprobación", aprobada: "Aprobada (sin enviar)", enviada: "Enviada (esperando respuesta del cliente)",
+  ganada: "Ganada (sin aceptar)", aceptada: "Aceptada", rechazada: "Rechazada", perdida: "Perdida", anulada: "Anulada", no_vigente: "No vigente",
+};
+
+export function shapeQuotations({ rows = [], today }) {
+  const described = rows.map((row) => {
+    const quotationDate = toIso(row.quotationDate);
+    const days = /^(\d+)_dias$/.exec(String(row.validity || ""));
+    const validUntil = quotationDate && days ? addDaysIso(quotationDate, Number(days[1])) : null;
+    const daysLeft = validUntil ? Math.round((new Date(`${validUntil}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000) : null;
+    return {
+      proposal: clip(row.proposalName, 120), version: Number(row.version || 1), status: row.status, statusLabel: QUOTATION_STATUS_LABELS[row.status] || row.status,
+      quotationDate, validity: row.validity || null, validUntil, daysLeft, expiresSoon: daysLeft !== null && daysLeft <= 7,
+      opportunity: clip(row.opportunity, 120), account: clip(row.account, 120), opportunityAmountUsd: amount(row.opportunityAmountUsd),
+    };
+  });
+  const byStatus = {};
+  for (const item of described) byStatus[item.status] = (byStatus[item.status] || 0) + 1;
+  const pickList = (status) => described.filter((item) => item.status === status).slice(0, MAX_LISTED);
+  return {
+    entityType: "seller_quotations",
+    asOf: today,
+    definitions: {
+      scope: "Última versión de cada cotización de tus oportunidades abiertas (donde eres el vendedor, en proceso y activadas).",
+      awaitingResponse: "Cotizaciones enviadas al cliente que aún no se declaran ganadas, aceptadas, rechazadas ni anuladas.",
+      dates: "quotationDate es la fecha de la cotización, no la de envío al cliente.",
+      amounts: "No se muestra el monto de la cotización, solo el monto de su oportunidad.",
+      validity: "La vigencia se cuenta desde la fecha de la cotización; «segun_notas» no tiene fecha calculable.",
+    },
+    total: described.length,
+    byStatus,
+    awaitingResponse: { count: byStatus.enviada || 0, items: pickList("enviada") },
+    inApproval: { count: byStatus.en_aprobacion || 0, items: pickList("en_aprobacion") },
+    approvedNotSent: { count: byStatus.aprobada || 0, items: pickList("aprobada") },
+    wonNotAccepted: { count: byStatus.ganada || 0, items: pickList("ganada") },
+    drafts: { count: byStatus.borrador || 0 },
+    rejected: { count: byStatus.rechazada || 0, items: pickList("rechazada") },
+    expiringSoon: described.filter((item) => item.expiresSoon && ["enviada", "aprobada"].includes(item.status)).slice(0, MAX_LISTED),
+  };
+}
+
+export async function loadSellerQuotations({ run, sellerId, today = localIso(new Date()) }) {
+  const rows = await run(
+    `SELECT qv.version_number AS version, qs.code AS status, qv.proposal_name AS proposalName, qv.quotation_date AS quotationDate,
+            qv.quotation_validity AS validity, o.name AS opportunity, acc.name AS account, o.amount_usd AS opportunityAmountUsd
+     FROM quotations q
+     JOIN quotation_versions qv ON qv.id = q.latest_version_id
+     JOIN quotation_statuses qs ON qs.id = qv.status_id
+     JOIN opportunities o ON o.id = q.opportunity_id
+     JOIN accounts acc ON acc.id = o.account_id
+     JOIN opportunity_commercial_statuses cs ON cs.id = o.commercial_status_id
+     JOIN opportunity_activation_statuses aas ON aas.id = o.activation_status_id
+     WHERE o.seller_user_id = ? AND cs.code = 'en_proceso' AND aas.code = 'activada'
+     ORDER BY qv.quotation_date DESC, q.id DESC LIMIT 300`,
+    [Number(sellerId)],
+  );
+  return shapeQuotations({ rows, today });
+}
+
+const STOPWORDS = new Set(["para", "como", "esta", "este", "esos", "esas", "con", "del", "los", "las", "una", "uno", "que", "qué", "puedo", "usar", "material", "materiales", "biblioteca", "etapa", "cliente", "oportunidad", "cuenta"]);
+const wordsOf = (text) => String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^a-z0-9]+/).filter((word) => (word.length >= 4 || (word.length >= 2 && /\d/.test(word))) && !STOPWORDS.has(word));
+
+// Ranks the active, shareable library items against the question and the opportunity in focus.
+export function shapeLibraryMaterials({ assets = [], question = "", opportunity = null }) {
+  const terms = [...new Set([...wordsOf(question), ...wordsOf(opportunity?.name), ...wordsOf(opportunity?.account), ...wordsOf(opportunity?.stageName)])];
+  const stageCode = String(opportunity?.stageCode || "");
+  const scored = assets
+    .filter((asset) => asset.isActive && !asset.isExpired)
+    .map((asset) => {
+      const reasons = [];
+      let score = 0;
+      const catalogNames = (asset.catalogs || []).map((catalog) => ({ name: catalog.name, words: wordsOf(catalog.name) }));
+      for (const term of terms) {
+        if (wordsOf(asset.title).includes(term)) { score += 3; reasons.push(`Título: ${term}`); }
+        const catalog = catalogNames.find((entry) => entry.words.includes(term));
+        if (catalog) { score += 3; reasons.push(catalog.name); }
+        if (wordsOf(`${asset.summary} ${asset.usageNote}`).includes(term)) score += 1;
+      }
+      if (stageCode && (asset.tags || []).some((tag) => tag.tagGroup === "stage" && tag.code === stageCode)) { score += 3; reasons.push("Etapa actual"); }
+      return { asset, score, reasons: [...new Set(reasons)] };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 6);
+  return {
+    entityType: "library_materials",
+    definitions: {
+      scope: "Material activo de la biblioteca de ventas que el usuario puede ver; se abre desde Biblioteca de ventas (/commercial-enablement).",
+      ranking: "Coincidencia con el título, fabricante, tecnología o etapa del contexto; no es una búsqueda en el texto de los documentos.",
+    },
+    focus: opportunity ? { opportunity: opportunity.name || null, account: opportunity.account || null, stage: opportunity.stageName || null } : null,
+    searchedTerms: terms.slice(0, 12),
+    totalActiveMaterials: assets.filter((asset) => asset.isActive && !asset.isExpired).length,
+    materials: scored.map(({ asset, reasons }) => ({
+      title: clip(asset.title, 160), type: asset.assetTypeLabel || null, summary: clip(asset.summary, 200) || null, whenToUse: clip(asset.usageNote, 200) || null,
+      audience: asset.visibilityLevel === "client_safe" ? "Para cliente" : "Solo interno", shareable: Boolean(asset.isShareable),
+      manufacturers: (asset.catalogs || []).filter((catalog) => catalog.catalogType === "manufacturer").map((catalog) => catalog.name),
+      technologies: (asset.catalogs || []).filter((catalog) => catalog.catalogType === "technology").map((catalog) => catalog.name),
+      matchedOn: reasons,
+    })),
+    note: scored.length ? null : "No encontré material de la biblioteca que coincida con ese contexto.",
+  };
+}
+
+export async function loadLibraryMaterials({ user, listAssets, question, opportunity }) {
+  const result = await listAssets({ user, filters: { pageSize: 200 } });
+  return shapeLibraryMaterials({ assets: result?.items || [], question, opportunity });
+}
+
+// Library suggestions do not depend on whose opportunities are asked about.
+export const COACH_SELLER_TOOLS_WITHOUT_OWN_SCOPE = Object.freeze(["getLibraryMaterials"]);
+
+// A direct request for library material, used to explain that the account cannot read the library.
+export function asksForLibraryMaterial(question) {
+  const text = String(question || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return /\b(biblioteca|que material(?:es)? (?:puedo|podria|hay|tengo|uso|usar|envio|enviar|mando|mandar|comparto|compartir|me recomiendas|recomiendas)|cual material|material (?:de ventas|comercial|para (?:esta|la) etapa|para (?:enviar|compartir|el cliente))|casos? de exito)\b/.test(text);
 }

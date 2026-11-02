@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { COACH_PERFORMANCE_TOOLS, sellerToolsFor, shapeCommission, loadSellerCommission, shapeAgenda, shapeClosedDeals, shapeTrend, readSellerTool, asksForOwnOpportunities, describeQuarterItems, pipelineIsOwn, keepOwnOpportunities, keepOwnOpportunityList, needsSellerPerformance, readSellerPerformance, shapeSellerPerformance } from "../src/coach/performance-tools.js";
+import { COACH_PERFORMANCE_TOOLS, sellerToolsFor, shapeCommission, loadSellerCommission, shapeAgenda, shapeClosedDeals, shapeTrend, readSellerTool, asksForOwnOpportunities, describeQuarterItems, pipelineIsOwn, keepOwnOpportunities, keepOwnOpportunityList, needsSellerPerformance, readSellerPerformance, shapeSellerPerformance, shapeQuotations, loadSellerQuotations, shapeLibraryMaterials, loadLibraryMaterials, asksForLibraryMaterial } from "../src/coach/performance-tools.js";
 
 const row = (id, name, rank, score, extra = {}) => ({
   sellerUserId: id, sellerUserName: name, rankPosition: rank, scoreTotal: score, scoreClosing: 10, scoreBuild: 40, scoreDiscipline: 20,
@@ -14,7 +14,7 @@ const open = { count: 13, amountUsd: 362000 };
 
 describe("herramienta de desempeño del vendedor para Coach", () => {
   it("se declara de solo lectura con el permiso de Ritmo comercial", () => {
-    expect(COACH_PERFORMANCE_TOOLS.map((tool) => tool.name)).toEqual(["getSellerPerformance", "getSellerAgenda", "getSellerClosedDeals", "getSellerCommission", "getSellerTrend"]);
+    expect(COACH_PERFORMANCE_TOOLS.map((tool) => tool.name)).toEqual(["getSellerPerformance", "getSellerAgenda", "getSellerClosedDeals", "getSellerCommission", "getSellerQuotations", "getLibraryMaterials", "getSellerTrend"]);
     expect(COACH_PERFORMANCE_TOOLS.every((tool) => tool.readOnly === true)).toBe(true);
     expect(COACH_PERFORMANCE_TOOLS[0]).toMatchObject({ requiredPermission: "ritmo_comercial.read" });
     expect(Object.fromEntries(COACH_PERFORMANCE_TOOLS.map((tool) => [tool.name, tool.requiredPermission]))).toMatchObject({
@@ -218,5 +218,66 @@ describe("herramienta de desempeño del vendedor para Coach", () => {
     const none = await loadSellerCommission({ run: vi.fn().mockResolvedValue([]), sellerId: 5, buildCommissionTracking: tracking, now: new Date(2026, 10, 1) });
     expect(none).toMatchObject({ hasCommissionData: false });
     expect(sellerToolsFor("¿Cuánto llevo de comisión?")).toContain("getSellerCommission");
+  });
+});
+
+describe("cotizaciones y biblioteca para Coach", () => {
+  const quote = (status, extra = {}) => ({ status, version: 1, proposalName: "Propuesta", quotationDate: "2026-10-20", validity: "30_dias", opportunity: "Renovación", account: "Acme", opportunityAmountUsd: 1000, ...extra });
+
+  it("agrupa por estado, calcula la vigencia y señala las que vencen pronto", () => {
+    const result = shapeQuotations({ rows: [quote("enviada"), quote("enviada", { quotationDate: "2026-09-01" }), quote("borrador", { validity: "segun_notas" }), quote("rechazada")], today: "2026-11-15" });
+    expect(result.byStatus).toEqual({ enviada: 2, borrador: 1, rechazada: 1 });
+    expect(result.awaitingResponse.count).toBe(2);
+    expect(result.awaitingResponse.items[0]).toMatchObject({ validUntil: "2026-11-19", daysLeft: 4, expiresSoon: true });
+    expect(result.expiringSoon.map((item) => item.daysLeft)).toEqual([4, -45]);
+    expect(result.drafts).toEqual({ count: 1 });
+    expect(result.definitions.amounts).toContain("monto de su oportunidad");
+  });
+
+  it("consulta solo las oportunidades abiertas y activadas del vendedor", async () => {
+    const run = vi.fn().mockResolvedValue([]);
+    const result = await loadSellerQuotations({ run, sellerId: 5, today: "2026-11-15" });
+    expect(run.mock.calls[0][0]).toContain("o.seller_user_id = ?");
+    expect(run.mock.calls[0][0]).toContain("aas.code = 'activada'");
+    expect(run.mock.calls[0][1]).toEqual([5]);
+    expect(result.total).toBe(0);
+  });
+
+  const asset = (title, extra = {}) => ({ title, summary: "", usageNote: "", isActive: true, isExpired: false, isShareable: true, visibilityLevel: "client_safe", assetTypeLabel: "PDF", catalogs: [], tags: [], ...extra });
+
+  it("recomienda por fabricante o etapa y no inventa cuando nada coincide", () => {
+    const assets = [
+      asset("Protección de APIs", { catalogs: [{ catalogType: "manufacturer", name: "F5 Networks" }] }),
+      asset("Guía de cierre", { tags: [{ tagGroup: "stage", code: "negociacion" }], visibilityLevel: "internal", isShareable: false }),
+      asset("Vencido F5", { isExpired: true, catalogs: [{ catalogType: "manufacturer", name: "F5 Networks" }] }),
+    ];
+    const byBrand = shapeLibraryMaterials({ assets, question: "material para F5", opportunity: null });
+    expect(byBrand.materials.map((item) => item.title)).toEqual(["Protección de APIs"]);
+    const byStage = shapeLibraryMaterials({ assets, question: "qué uso en esta etapa", opportunity: { name: "X", account: "Y", stageCode: "negociacion", stageName: "Negociación" } });
+    expect(byStage.materials[0]).toMatchObject({ title: "Guía de cierre", audience: "Solo interno", matchedOn: ["Etapa actual"] });
+    const none = shapeLibraryMaterials({ assets, question: "algo sin relación", opportunity: null });
+    expect(none.materials).toEqual([]);
+    expect(none.note).toContain("No encontré");
+  });
+
+  it("lee la biblioteca con el usuario y el contexto de la pregunta", async () => {
+    const listAssets = vi.fn().mockResolvedValue({ items: [asset("Caso Bluecat", { catalogs: [{ catalogType: "manufacturer", name: "Bluecat Networks" }] })] });
+    const user = { id: 5 };
+    const result = await loadLibraryMaterials({ user, listAssets, question: "material de Bluecat", opportunity: null });
+    expect(listAssets.mock.calls[0][0].user).toBe(user);
+    expect(result.materials[0].title).toBe("Caso Bluecat");
+  });
+
+  it("enruta las preguntas de cotizaciones y material", () => {
+    expect(sellerToolsFor("¿Qué cotizaciones tengo pendientes de respuesta?")).toContain("getSellerQuotations");
+    expect(sellerToolsFor("¿Qué material puedo usar en esta etapa con Acme?")).toContain("getLibraryMaterials");
+    expect(sellerToolsFor("¿Cuál es la etapa de Vrf 2027?")).toEqual([]);
+  });
+
+  it("distingue una petición directa de material de la biblioteca", () => {
+    expect(asksForLibraryMaterial("¿Qué material puedo usar en esta etapa con Acme?")).toBe(true);
+    expect(asksForLibraryMaterial("¿Hay algo en la biblioteca sobre F5?")).toBe(true);
+    expect(asksForLibraryMaterial("¿Cuál es mi cuota?")).toBe(false);
+    expect(asksForLibraryMaterial("¿Qué material de preparación debo revisar de la cuenta?")).toBe(false);
   });
 });

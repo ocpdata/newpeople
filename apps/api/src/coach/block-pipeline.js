@@ -2,6 +2,8 @@ import { z } from "zod";
 import { languageInstruction, requestedLanguage } from "../chat-language.js";
 import {
   COACH_PERFORMANCE_TOOL_NAMES,
+  COACH_SELLER_TOOLS_WITHOUT_OWN_SCOPE,
+  asksForLibraryMaterial,
   asksForOwnOpportunities,
   keepOwnOpportunities,
   keepOwnOpportunityList,
@@ -91,6 +93,21 @@ const GUIDE_FACT = {
   label: "Guía del proceso comercial",
   excerpt: "Respuesta de coaching basada en el proceso comercial autorizado.",
 };
+
+// The opportunity in focus, so library suggestions can use its name, account and stage.
+function focusOpportunity(opportunities, opportunityId) {
+  const found = (Array.isArray(opportunities) ? opportunities : []).find(
+    (item) => Number(item?.id) === Number(opportunityId || 0),
+  );
+  return found
+    ? {
+        name: found.name || "",
+        account: found.accountName || found.account?.name || "",
+        stageCode: found.stageCode || "",
+        stageName: found.stageName || "",
+      }
+    : null;
+}
 
 const CREATE_OPERATION_KINDS = new Set([
   "create_account",
@@ -328,7 +345,18 @@ export function createCoachBlockPipeline({
             typeof dependencies.readSellerTool === "function"
           ) {
             const performance = await withCoachDeadline(
-              () => dependencies.readSellerTool({ toolName, user }),
+              () =>
+                dependencies.readSellerTool({
+                  toolName,
+                  user,
+                  context: {
+                    question,
+                    opportunity: focusOpportunity(
+                      readModel.scopedSnapshot?.coachOpportunities,
+                      selected.opportunityId,
+                    ),
+                  },
+                }),
               deadlineAt,
             );
             return withCoachCounts({ toolName, readOnly: true, result: performance });
@@ -398,6 +426,16 @@ export function createCoachBlockPipeline({
     const coachingPolicyAllowed =
       readModel?.intentRouting?.mode === "coaching" ||
       plan?.mode === "coaching";
+    if (
+      asksForLibraryMaterial(question) &&
+      !authorizedTools.some((tool) => tool.name === "getLibraryMaterials")
+    ) {
+      diagnostics.evidence = { status: "library_not_authorized" };
+      return coachBlockFailure(
+        "Esta cuenta no tiene acceso a la Biblioteca de ventas, así que no puedo recomendarte material desde aquí. Pide el acceso a un administrador.",
+        "clarification",
+      );
+    }
     for (let round = 0; round <= limits.maxEvidenceRounds; round += 1) {
       const result = await trace.span(
         "B5",
@@ -665,6 +703,11 @@ export function createCoachBlockPipeline({
             ? {
                 ...proposed,
                 ...authoritativeRoute,
+                // The planner sometimes writes the string "null"; only deep exploration needs a detail target.
+                detailTarget:
+                  authoritativeRoute.mode === "deep_exploration"
+                    ? proposed.detailTarget
+                    : null,
                 confidence: Math.max(
                   0.68,
                   Number(
@@ -714,12 +757,12 @@ export function createCoachBlockPipeline({
                     classification.allowedTools.includes(item.toolName),
                   ),
           };
-          if (
-            classification.mode !== "deep_exploration" &&
-            pipelineIsOwn({ question, user })
-          ) {
+          if (classification.mode !== "deep_exploration") {
+            const ownScope = pipelineIsOwn({ question, user });
             const missing = sellerToolsFor(question).filter(
               (toolName) =>
+                (ownScope ||
+                  COACH_SELLER_TOOLS_WITHOUT_OWN_SCOPE.includes(toolName)) &&
                 classification.allowedTools.includes(toolName) &&
                 !plan.reads.some((item) => item.toolName === toolName),
             );
@@ -855,7 +898,7 @@ export function createCoachBlockPipeline({
               {
                 role: "system",
                 content:
-                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia y para totales de monto totalAmountUsd; no cuentes ni sumes registros a mano. Si la pregunta no trata del CRM, del desempeño comercial ni del proceso de ventas (cultura general, por ejemplo), no la respondas: indica que queda fuera del alcance de Coach. Si la evidencia trae getSellerPerformance, usa los nombres de sus labels («Pipeline abierto», «Pipeline del trimestre», «Pipeline del siguiente Q») y di brevemente qué cuenta cada uno según sus definitions; sus cifras son las mismas de Ritmo comercial. La brecha es la de la evidencia (cuota menos lo ganado); no la recalcules restando el pipeline y para la cobertura usa coverage. Si la evidencia trae getSellerAgenda, getSellerClosedDeals, getSellerTrend o getSellerCommission, usa sus cifras y definitions tal cual (tasa de cierre, ciclo, motivos de pérdida, vencidos, comparaciones); en la tendencia la semana en curso es parcial y no se compara con las completas. Si un dato no está en la evidencia, dilo en lugar de estimarlo. Si preguntan qué hacer hoy, esta semana o qué tienen pendiente, responde enumerando las acciones de getSellerAgenda.focus (vencidas primero, luego las de hoy y las de la semana), cada una con su oportunidad y fecha, sin resumir el pipeline ni quedarte en un conteo. «Mis oportunidades» son las del vendedor que pregunta; si mencionas las de sus cuentas, aclara que son otras. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
+                  "Para esta respuesta usa solo la evidencia autorizada del bloque B9 y las guías/reglas permitidas de Coach. Distingue hechos, recomendaciones y campos pendientes. No ejecutes herramientas ni declares escrituras realizadas. Los resultados vacíos prueban solo ausencia dentro del alcance consultado. Para conteos usa resultCount y countsByCommercialStatus de la evidencia y para totales de monto totalAmountUsd; no cuentes ni sumes registros a mano. Si la pregunta no trata del CRM, del desempeño comercial ni del proceso de ventas (cultura general, por ejemplo), no la respondas: indica que queda fuera del alcance de Coach. Si la evidencia trae getSellerPerformance, usa los nombres de sus labels («Pipeline abierto», «Pipeline del trimestre», «Pipeline del siguiente Q») y di brevemente qué cuenta cada uno según sus definitions; sus cifras son las mismas de Ritmo comercial. La brecha es la de la evidencia (cuota menos lo ganado); no la recalcules restando el pipeline y para la cobertura usa coverage. Si la evidencia trae getSellerAgenda, getSellerClosedDeals, getSellerTrend, getSellerCommission o getSellerQuotations, usa sus cifras y definitions tal cual (tasa de cierre, ciclo, motivos de pérdida, vencidos, comparaciones); en la tendencia la semana en curso es parcial y no se compara con las completas. Si un dato no está en la evidencia, dilo en lugar de estimarlo. Si la evidencia trae getLibraryMaterials, recomienda solo esos materiales por su título, para quién son (cliente o interno) y cuándo usarlos, y dile que los abre en Biblioteca de ventas; si no hay coincidencias, dilo sin inventar documentos. Si preguntan qué hacer hoy, esta semana o qué tienen pendiente, responde enumerando las acciones de getSellerAgenda.focus (vencidas primero, luego las de hoy y las de la semana), cada una con su oportunidad y fecha, sin resumir el pipeline ni quedarte en un conteo. «Mis oportunidades» son las del vendedor que pregunta; si mencionas las de sus cuentas, aclara que son otras. Cuando recomiendes prioridades o próximos pasos, nombra oportunidades o cuentas concretas de la evidencia (nombre, cuenta, monto y etapa) y justifica cada una; no des consejos genéricos." +
                   languageInstruction(requestedLanguage({ question, history })),
               },
               {

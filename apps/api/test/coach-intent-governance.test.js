@@ -81,6 +81,8 @@ describe("Coach intent governance", () => {
       requiredContext: [],
       allowedTools: [
         "getSellerPerformance",
+        "getSellerQuotations",
+        "getLibraryMaterials",
         "getSellerCommission",
         "getSellerAgenda",
         "getSellerClosedDeals",

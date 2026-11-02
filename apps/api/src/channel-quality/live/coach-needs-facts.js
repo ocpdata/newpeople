@@ -13,7 +13,7 @@ const round = (value, digits = 1) => Number(Number(value || 0).toFixed(digits));
 const last = (list) => (Array.isArray(list) && list.length ? Number(list[list.length - 1] || 0) : 0);
 const previous = (list) => (Array.isArray(list) && list.length > 1 ? Number(list[list.length - 2] || 0) : 0);
 
-export async function loadSellerNeedsFacts({ run, league, sellerId, commissionTracking = null }) {
+export async function loadSellerNeedsFacts({ run, league, sellerId, commissionTracking = null, libraryAssets = [] }) {
   const rows = Array.isArray(league?.leaderboard) ? league.leaderboard : [];
   const me = rows.find((row) => Number(row.sellerUserId) === Number(sellerId));
   if (!me) throw new Error(`El vendedor ${sellerId} no aparece en Ritmo comercial.`);
@@ -22,6 +22,25 @@ export async function loadSellerNeedsFacts({ run, league, sellerId, commissionTr
   const minimumScore = Math.min(...Object.values(scores).map(Number));
   const lowest = Object.entries(scores).filter(([, value]) => Number(value) === minimumScore).map(([key]) => key);
   const gap = Number(me.gapAmountUsd || 0);
+
+  const quotationRows = await run(
+    `SELECT qs.code AS status, COUNT(*) AS total
+     FROM quotations q JOIN quotation_versions qv ON qv.id = q.latest_version_id JOIN quotation_statuses qs ON qs.id = qv.status_id
+     JOIN opportunities o ON o.id = q.opportunity_id
+     JOIN opportunity_commercial_statuses cs ON cs.id = o.commercial_status_id
+     JOIN opportunity_activation_statuses aas ON aas.id = o.activation_status_id
+     WHERE o.seller_user_id = ? AND cs.code = 'en_proceso' AND aas.code = 'activada' GROUP BY qs.code`,
+    [sellerId],
+  );
+  const awaitingRows = await run(
+    `SELECT o.name AS opportunity, a.name AS account, qv.proposal_name AS proposalName
+     FROM quotations q JOIN quotation_versions qv ON qv.id = q.latest_version_id JOIN quotation_statuses qs ON qs.id = qv.status_id
+     JOIN opportunities o ON o.id = q.opportunity_id JOIN accounts a ON a.id = o.account_id
+     JOIN opportunity_commercial_statuses cs ON cs.id = o.commercial_status_id
+     JOIN opportunity_activation_statuses aas ON aas.id = o.activation_status_id
+     WHERE o.seller_user_id = ? AND cs.code = 'en_proceso' AND aas.code = 'activada' AND qs.code = 'enviada' ORDER BY o.id LIMIT 20`,
+    [sellerId],
+  );
 
   const [focus] = await run(
     `SELECT o.name, a.name AS account, o.amount_usd AS amountUsd, st.name AS stage ${FROM_OPPORTUNITIES}
@@ -135,6 +154,16 @@ export async function loadSellerNeedsFacts({ run, league, sellerId, commissionTr
         pendingAcceptance: (commissionTracking?.pendingQuotations || []).filter((item) => Number(item.sellerUserId) === Number(sellerId)).length,
       };
     })(),
+    quotations: {
+      byStatus: Object.fromEntries(quotationRows.map((row) => [row.status, Number(row.total)])),
+      awaitingResponse: quotationRows.filter((row) => row.status === "enviada").reduce((sum, row) => sum + Number(row.total), 0),
+      awaitingResponseOpportunities: awaitingRows.map((row) => ({ opportunity: row.opportunity, account: row.account, proposal: row.proposalName })),
+    },
+    library: {
+      activeMaterials: libraryAssets.filter((asset) => asset.isActive && !asset.isExpired).length,
+      titles: libraryAssets.filter((asset) => asset.isActive && !asset.isExpired).map((asset) => asset.title),
+      note: "El material recomendado debe ser uno de estos títulos; decir que no hay coincidencias para el contexto también es válido.",
+    },
     focus: focus ? { name: focus.name, account: focus.account, stage: focus.stage, amountUsd: Number(focus.amountUsd) } : null,
   };
 }

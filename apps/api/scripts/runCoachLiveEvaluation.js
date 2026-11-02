@@ -13,6 +13,7 @@ import { signToken } from "../src/utils.js";
 import { assertModelPriced } from "../src/customer-chat-acceptance/runner.js";
 import { recordChannelQualityRun } from "../src/channel-quality/store.js";
 import { loadCoachFacts } from "../src/channel-quality/live/coach-facts.js";
+import { listCommercialEnablementAssets } from "../src/commercial-enablement/library-service.js";
 import { loadSellerNeedsFacts } from "../src/channel-quality/live/coach-needs-facts.js";
 import needsBank from "../src/channel-quality/live/coach-needs-bank.json" with { type: "json" };
 import { coachBank, createCoachHttpClient, runCoachBank, validateCoachBank } from "../src/channel-quality/live/coach-live.js";
@@ -100,10 +101,13 @@ async function main() {
       [league.quarterContext.current.year, league.quarterContext.current.quarter],
     );
     const commissionTracking = period ? await buildCommissionTrackingPayload(Number(period.id)) : null;
-    facts = await loadSellerNeedsFacts({ run: query, league, sellerId: actorId, commissionTracking });
-    // The seller does not have Coach access in this database, so access is simulated for the run without changing any data.
+    const actorForLibrary = await getUserAuthContext(actorId);
+    actorForLibrary.permissionSet = new Set([...actorForLibrary.permissionSet, "enablement_comercial.use"]);
+    const library = await listCommercialEnablementAssets({ user: actorForLibrary, filters: { pageSize: 100 } }).catch(() => ({ items: [] }));
+    facts = await loadSellerNeedsFacts({ run: query, league, sellerId: actorId, commissionTracking, libraryAssets: library.items });
+    // The seller does not have Coach or library access in this database, so access is simulated for the run without changing any data.
     const actor = await getUserAuthContext(actorId);
-    actor.permissionSet = new Set([...actor.permissionSet, "mi_coach.use"]);
+    actor.permissionSet = new Set([...actor.permissionSet, "mi_coach.use", ...(flag("--without-library") ? [] : ["enablement_comercial.use"])]);
     const actorApp = express();
     actorApp.use(express.json());
     actorApp.use("/api/mi-agent", (req, _res, next) => { req.user = actor; req.auth = { sub: actor.id }; next(); }, miAgentRoutes);
