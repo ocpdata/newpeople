@@ -62,12 +62,14 @@ export default function PurchaseOrderValueFields({ order, versionId, canUpdate, 
 
   return (
     <div className="purchase-order-value-fields">
-      <label>Valor de la orden de compra
-        <input type="number" min="0" max="9999999999999.99" step="0.01"
+      <div className="purchase-order-value-grid">
+      <label>Importe
+        <input aria-label="Valor de la orden de compra" type="number" min="0" max="9999999999999.99" step="0.01"
+          placeholder="0.00"
           value={amount} disabled={!canUpdate || saving}
           onChange={(event) => { setAmount(event.target.value); setSuccess(""); }} />
       </label>
-      <label>Moneda de la orden de compra
+      <label>Moneda
         <select aria-label="Moneda de la orden de compra" value={currency} disabled={!canUpdate || saving || loading}
           onChange={(event) => { setCurrency(event.target.value); setSuccess(""); }}>
           <option value="">Selecciona moneda</option>
@@ -75,10 +77,14 @@ export default function PurchaseOrderValueFields({ order, versionId, canUpdate, 
           {currencies.map((item) => <option key={item.code} value={item.code}>{item.code} - {item.name}</option>)}
         </select>
       </label>
-      {canUpdate && <button type="button" className="btn-secondary" disabled={saving || loading}
-        onClick={() => void save()}>{saving ? "Guardando..." : "Guardar valor de orden"}</button>}
-      {canUpdate && <button type="button" className="btn-secondary" disabled={saving}
-        onClick={() => void remove()}>Quitar orden de compra del cierre</button>}
+      </div>
+      {canUpdate && <div className="purchase-order-value-actions">
+        <button type="button" className="btn-primary" aria-label="Guardar valor de orden" disabled={saving || loading}
+          onClick={() => void save()}>{saving ? "Procesando..." : "Guardar valor"}</button>
+        <button type="button" className="btn-secondary purchase-order-remove-btn"
+          aria-label="Quitar orden de compra del cierre" disabled={saving}
+          onClick={() => void remove()}>Quitar del cierre</button>
+      </div>}
       {loading && <p role="status">Cargando monedas...</p>}
       {error && <div role="alert"><p className="field-hint opportunity-documents-preview-error">{error}</p>
         <button type="button" disabled={saving} onClick={() => {

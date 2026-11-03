@@ -122,7 +122,8 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
   );
   const states = (key, title, options) => (
     <fieldset>
-      <legend>{title} (sin selección: todos)</legend>
+      <legend>{title}</legend>
+      <p className="report-results-note">Sin selección se incluyen todos los estados.</p>
       <div className="report-state-options">
         {options.map(([value, label]) => (
           <label key={value}>
@@ -156,38 +157,54 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
             setApplied({ filters: draft, page: 1 });
           }}>
             <h3>Filtros</h3>
+            <p className="report-results-note">Elige una consulta rápida y ajusta solo lo que necesites.</p>
             {catalogError && (
               <div role="alert">
                 <p className="form-error">{catalogError}</p>
                 <button type="button" onClick={() => setCatalogRefresh((value) => value + 1)}>Reintentar filtros</button>
               </div>
             )}
+            <section className="report-filter-section" aria-label="Búsqueda y responsables">
+            <h4>Búsqueda y responsables</h4>
             <div className="report-filter-grid">
               {select("preset", "Consulta rápida", PRESETS)}
+              <label>Buscar oportunidad o cuenta<input type="search" maxLength={200} value={draft.search} onChange={(event) => update("search", event.target.value)} placeholder="Nombre o ID de oportunidad" /></label>
               {select("accountId", "Cuenta", [["", "Todas"], ...catalogs.accounts.map((item) => [item.id, item.name])])}
               {select("sellerUserId", "Vendedor", [["", "Todos"], ...catalogs.sellers.map((item) => [item.id, item.name])])}
               {select("presalesUserId", "Preventa", [["", "Todos"], ...catalogs.presales.map((item) => [item.id, item.name])])}
               {select("quotationPresence", "Con cotizaciones", [["all", "Todas"], ["with", "Con cotizaciones"], ["without", "Sin cotizaciones"]])}
-              {select("opportunityActivation", "Activación de oportunidad", [["all", "Todas"], ["activada", "Activada"], ["pendiente_activacion", "Pendiente"], ["desactivada", "Desactivada"]])}
-              {select("quotationActivation", "Activación de cotización", [["all", "Todas"], ["activada", "Activada"], ["desactivada", "Desactivada"]])}
+            </div>
+            </section>
+            <section className="report-filter-section" aria-label="Periodo">
+            <h4>Periodo <span className="report-filter-optional">Opcional</span></h4>
+            <div className="report-filter-grid report-date-grid">
               {select("dateType", "Fecha a filtrar", [["expected_close", "Cierre previsto"], ["actual_close", "Cierre comercial real"], ["quotation", "Fecha de cotización"]])}
               <label>Desde<input type="date" value={draft.dateFrom} max={draft.dateTo || undefined} onChange={(event) => update("dateFrom", event.target.value)} /></label>
               <label>Hasta<input type="date" value={draft.dateTo} min={draft.dateFrom || undefined} onChange={(event) => update("dateTo", event.target.value)} /></label>
-              <label>Buscar oportunidad o cuenta<input type="search" maxLength={200} value={draft.search} onChange={(event) => update("search", event.target.value)} placeholder="Nombre o ID de oportunidad" /></label>
+            </div>
+            </section>
+            <section className="report-filter-section" aria-label="Estados">
+              <h4>Estados</h4>
+              {states("commercialStatuses", "Estado comercial de oportunidad", COMMERCIAL_STATES)}
+              {states("quotationStatuses", "Estado de cotización", QUOTATION_STATES)}
+            </section>
+            <details className="report-advanced-filters">
+              <summary>Opciones avanzadas <span>Activación y orden de resultados</span></summary>
+              <div className="report-filter-grid">
+              {select("opportunityActivation", "Activación de oportunidad", [["all", "Todas"], ["activada", "Activada"], ["pendiente_activacion", "Pendiente"], ["desactivada", "Desactivada"]])}
+              {select("quotationActivation", "Activación de cotización", [["all", "Todas"], ["activada", "Activada"], ["desactivada", "Desactivada"]])}
               {select("sort", "Ordenar por", [["id", "ID"], ["name", "Oportunidad"], ["account", "Cuenta"], ["amount", "Importe"], ["expected_close", "Cierre previsto"], ["actual_close", "Cierre real"]])}
               {select("direction", "Dirección", [["desc", "Descendente"], ["asc", "Ascendente"]])}
               {select("pageSize", "Oportunidades por página", [["10", "10"], ["50", "50"], ["100", "100"]])}
             </div>
-            {states("commercialStatuses", "Estado comercial de oportunidad", COMMERCIAL_STATES)}
-            {states("quotationStatuses", "Estado de cotización", QUOTATION_STATES)}
-            <p>
-              Los filtros se acumulan. En las consultas de aceptadas, los estados y fechas de cotización
-              deben coincidir en la misma cotización. La activación de cotización delimita cuáles se
-              consideran en el reporte, incluso para identificar oportunidades sin cotizaciones.
+            </details>
+            <p className="report-results-note report-filter-help">
+              Todos los filtros se combinan. Los estados y fechas de cotización deben cumplirse en la misma cotización.
+              La activación limita qué cotizaciones se consideran, también al buscar oportunidades sin cotizaciones.
             </p>
-            <div className="report-actions">
-              <button type="submit" className="primary-button">Aplicar filtros</button>
-              <button type="button" className="secondary-button" onClick={() => {
+            <div className="report-actions report-filter-actions">
+              <button type="submit" className="btn-primary">Aplicar filtros</button>
+              <button type="button" className="btn-secondary" onClick={() => {
                 setDraft(INITIAL_FILTERS);
                 setApplied({ filters: INITIAL_FILTERS, page: 1 });
                 setDisplayMode("all");
@@ -202,33 +219,40 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
           </div>}
           {payload && (
             <section className="panel report-results" aria-label="Resultados del reporte">
-              <h3>Resultados</h3>
-              <p>Totales de todos los resultados filtrados, no solo de esta página. El alcance es la intersección de las cuentas autorizadas en ambos módulos.</p>
+              <header className="report-results-header">
+                <div>
+                  <h3>Resultados</h3>
+                  <p>Resumen de todos los resultados filtrados, no solo de esta página.</p>
+                </div>
+                <span className="report-result-count">{payload.total} oportunidades</span>
+              </header>
               <dl className="report-totals">
                 <div><dt>Oportunidades</dt><dd>{payload.summary.opportunityCount}</dd></div>
                 <div><dt>Ganadas</dt><dd>{payload.summary.wonCount}</dd></div>
                 <div><dt>Importe de oportunidades (USD)</dt><dd>{formatAmount(payload.summary.opportunityAmountUsd)}</dd></div>
                 <div><dt>Cotizaciones</dt><dd>{payload.summary.quotationCount}</dd></div>
                 <div><dt>Aceptadas</dt><dd>{payload.summary.acceptedCount}</dd></div>
-                <div><dt>Cotizaciones coincidentes</dt><dd>{payload.summary.matchingCount}</dd></div>
+                <div><dt>Cotizaciones que cumplen los filtros</dt><dd>{payload.summary.matchingCount}</dd></div>
               </dl>
+              <div className="report-results-toolbar">
               <label className="report-display-mode">Mostrar cotizaciones
                 <select value={displayMode} onChange={(event) => setDisplayMode(event.target.value)}>
-                  <option value="all">Todas las consideradas</option>
+                  <option value="all">Todas, incluidas las de contexto</option>
                   <option value="matching">Solo las que cumplen el filtro</option>
                 </select>
               </label>
-              <p>Los importes cotizados incluyen descuentos e IVA según su configuración. No se suman al importe de oportunidades.</p>
-              <ul>
+              <ul className="report-currency-totals" aria-label="Totales cotizados por moneda">
                 {payload.summary.currencies.map((item) => (
                   <li key={item.currency || "unknown"}>
                     Cotizado {item.currency || "(sin moneda)"}: {formatAmount(displayMode === "matching" ? item.matchingAmount : item.amount)}
                   </li>
                 ))}
               </ul>
+              </div>
+              <p className="report-results-note">Importes cotizados con descuentos e IVA. Cada moneda se totaliza por separado; no se suma al monto de oportunidades.</p>
               {!payload.items.length ? <p>No hay resultados para los filtros seleccionados.</p> : (
                 <div className="report-table-scroll">
-                  <table>
+                  <table className="report-main-table" aria-label="Oportunidades y sus importes">
                     <thead><tr>
                       <th>Oportunidad</th><th>Cuenta</th><th>Vendedor / Preventa</th>
                       <th>Monto de oportunidad (USD)</th><th>Montos de cotizaciones</th>
@@ -240,46 +264,48 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                         const quotations = displayMode === "matching" ? item.quotations.filter((quotation) => quotation.matchesFilters) : item.quotations;
                         return (
                           <Fragment key={item.id}>
-                            <tr>
-                              <td>#{item.id} {item.name}</td><td>{item.accountName}</td>
-                              <td>{item.sellerName || "-"} / {item.presalesName || "-"}</td>
-                              <td>{formatAmount(item.amountUsd)}</td>
+                            <tr className="report-opportunity-row">
+                              <td><strong>#{item.id} {item.name}</strong></td><td>{item.accountName}</td>
+                              <td><span className="report-owner">{item.sellerName || "Sin vendedor"}</span><span className="report-owner-secondary">Preventa: {item.presalesName || "Sin asignar"}</span></td>
+                              <td className="report-money">{formatAmount(item.amountUsd)}</td>
                               <td>
                                 {quotations.length ? quotations.map((quotation) => (
-                                  <div key={quotation.id}>
+                                  <div className="report-quote-amount" key={quotation.id}>
                                     #{quotation.id}: {formatAmount(quotation.totalAmount)} {quotation.currency || ""}
                                   </div>
                                 )) : "Sin cotizaciones para esta selección."}
                               </td>
                               <td>
                                 {quotations.length ? quotations.map((quotation) => (
-                                  <div key={quotation.id}>#{quotation.id}: {quotationConversion(quotation, "amount")}</div>
+                                  <div className="report-quote-amount" key={quotation.id}>#{quotation.id}: {quotationConversion(quotation, "amount")}</div>
                                 )) : "-"}
                               </td>
                               <td>
                                 {quotations.length ? quotations.map((quotation) => (
-                                  <div key={quotation.id}>#{quotation.id}: {quotationConversion(quotation, "rate")}</div>
+                                  <div className="report-quote-amount" key={quotation.id}>#{quotation.id}: {quotationConversion(quotation, "rate")}</div>
                                 )) : "-"}
                               </td>
                               <td>
                                 {quotations.length ? quotations.map((quotation) => (
-                                  <div key={quotation.id}>
-                                    <strong>#{quotation.id}</strong>
+                                  <div className="report-order-amount" key={quotation.id}>
+                                    <span className="report-quotation-reference">Cotización #{quotation.id}</span>
                                     <PurchaseOrderAmounts quotation={quotation} />
                                   </div>
                                 )) : "-"}
                               </td>
                             </tr>
-                            <tr><td colSpan={8}>
-                              <details>
+                            <tr className="report-detail-row"><td colSpan={8}>
+                              <details className="report-quotation-details">
                                 <summary>
                                   Cotizaciones de #{item.id}: {item.quotations.length} total,
                                   {" "}{item.quotations.filter((quotation) => quotation.statusCode === "aceptada").length} aceptadas,
                                   {" "}{quotations.length} visibles
                                 </summary>
+                                <div className="report-detail-content">
+                                <p className="report-results-note">“Cumple los filtros” se refiere a la selección actual, no a una comparación de importes.</p>
                                 {!quotations.length ? <p>Sin cotizaciones para esta selección.</p> : (
                                   <table aria-label={`Cotizaciones de ${item.name}`}>
-                                    <thead><tr><th>Cotización</th><th>Versión</th><th>Importe original</th><th>Equivalente (USD)</th><th>Tipo de cambio</th><th>Valores de órdenes de compra</th><th>Coincide</th></tr></thead>
+                                    <thead><tr><th>Cotización</th><th>Versión</th><th>Importe original</th><th>Equivalente (USD)</th><th>Tipo de cambio</th><th>Valores de órdenes de compra</th><th>Cumple los filtros</th></tr></thead>
                                     <tbody>{quotations.map((quotation) => (
                                       <tr key={quotation.id} className={quotation.matchesFilters ? "report-quotation-match" : ""}>
                                         <td>#{quotation.id} {quotation.proposalName || "Sin nombre"}</td>
@@ -288,11 +314,12 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                                         <td>{quotationConversion(quotation, "amount")}</td>
                                         <td>{quotationConversion(quotation, "rate")}</td>
                                         <td><PurchaseOrderAmounts quotation={quotation} /></td>
-                                        <td>{quotation.matchesFilters ? "Sí" : "No"}</td>
+                                        <td><span className={`report-filter-badge ${quotation.matchesFilters ? "is-match" : ""}`}>{quotation.matchesFilters ? "Cumple" : "No cumple"}</span></td>
                                       </tr>
                                     ))}</tbody>
                                   </table>
                                 )}
+                                </div>
                               </details>
                             </td></tr>
                           </Fragment>
@@ -302,7 +329,7 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                   </table>
                 </div>
               )}
-              <div className="report-actions">
+              <div className="report-actions report-pagination">
                 <button type="button" disabled={payload.page <= 1} onClick={() => setApplied((current) => ({ ...current, page: payload.page - 1 }))}>Anterior</button>
                 <span>Página {payload.page} de {Math.max(1, Math.ceil(payload.total / payload.pageSize))}</span>
                 <button type="button" disabled={payload.page * payload.pageSize >= payload.total} onClick={() => setApplied((current) => ({ ...current, page: payload.page + 1 }))}>Siguiente</button>

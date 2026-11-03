@@ -24,6 +24,10 @@ pueden consultarse, para evitar interpretar informacion restringida como ausente
 ## Reglas del reporte
 
 - Una fila principal por oportunidad, con sus cotizaciones desplegables.
+- Los resultados agrupan los indicadores en tarjetas, los totales cotizados por
+  moneda y el selector de visualizacion en una barra. Cada oportunidad queda
+  separada de la siguiente y el detalle se despliega en un panel propio.
+  Los importes de ordenes se agrupan bajo la referencia de su cotizacion.
 - Las oportunidades y cotizaciones anuladas se excluyen siempre de resultados,
   detalle, catalogos y totales. No se ofrece Anulada como filtro de estado.
   Una oportunidad con solo cotizaciones anuladas se considera sin cotizaciones.
@@ -67,6 +71,11 @@ pueden consultarse, para evitar interpretar informacion restringida como ausente
 
 ### Filtros adicionales
 
+La interfaz agrupa busqueda y responsables, periodo opcional y estados.
+Activacion, ordenamiento y tamano de pagina se encuentran en Opciones avanzadas,
+plegadas inicialmente. Los estados seleccionados se resaltan y sin seleccion se
+consideran todos. Aplicar filtros actualiza la consulta; Limpiar restablece los valores.
+
 - Cuenta, vendedor, preventa, nombre o ID de oportunidad y nombre de cuenta.
 - Estados comerciales y de cotizacion con seleccion multiple.
 - Con o sin cotizaciones.
@@ -85,7 +94,8 @@ cotizaciones" significa sin cotizaciones activadas. Por defecto se consideran to
 las activaciones para no excluir cierres historicos.
 
 El detalle muestra por defecto todas las cotizaciones consideradas y destaca las
-coincidentes. Se puede elegir mostrar solo las que cumplen el filtro.
+coincidentes. La columna Cumple los filtros indica Cumple o No cumple segun los
+filtros actuales, no compara importes. Se puede elegir mostrar solo las que cumplen el filtro.
 El rango de fechas es inclusivo; la fecha de modificacion no se usa como fecha de
 aceptacion. No se incluye filtro de fecha de aceptacion en esta version.
 

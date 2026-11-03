@@ -55,6 +55,10 @@ Formalizar la aceptación administrativa de cotizaciones ganadas y dar seguimien
   del cliente para la misma version. Cada archivo se registra una sola vez y
   tiene su propio valor y moneda. Agregar o quitar una orden no modifica las
   demas ni sus valores. Se admiten archivos ya cargados en cotizacion u oportunidad.
+- Cada orden se presenta en una tarjeta con archivo y descarga, importe y moneda,
+  Guardar valor y Quitar del cierre. Los campos aparecen en dos columnas en
+  escritorio y se apilan en movil. Agregar otra orden mantiene separada la
+  seleccion de archivos de la edicion de las ordenes registradas.
 - El editor de cotizacion y la aceptacion conservan su seleccion individual;
   volver a guardar desde esos flujos no elimina las ordenes adicionales
   registradas en procesamiento.

@@ -88,6 +88,32 @@ test("guarda el importe y moneda por orden y los recupera al reabrir procesamien
   await expect(page.getByLabel("Moneda de la orden de compra", { exact: true })).toHaveValue("MXN");
 });
 
+test("agrupa archivo, importe y acciones por orden y adapta los campos al ancho disponible", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openProcessing(page);
+  const card = page.getByRole("group", { name: "Orden de compra: orden-cliente.pdf", exact: true });
+  const amount = card.getByLabel("Valor de la orden de compra", { exact: true });
+  const currency = card.getByLabel("Moneda de la orden de compra", { exact: true });
+  await expect(page.getByRole("heading", { name: "Órdenes de compra (1)", exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Descargar documento", exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Guardar valor de orden", exact: true })).toHaveText("Guardar valor");
+  await expect(card.getByRole("button", { name: "Quitar orden de compra del cierre", exact: true })).toHaveText("Quitar del cierre");
+  const desktopAmount = await amount.boundingBox();
+  const desktopCurrency = await currency.boundingBox();
+  expect(Math.abs(desktopAmount.y - desktopCurrency.y)).toBeLessThan(2);
+  expect(desktopCurrency.x).toBeGreaterThan(desktopAmount.x + desktopAmount.width);
+  await card.screenshot({ path: testInfo.outputPath("orden-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await currency.scrollIntoViewIfNeeded();
+  const mobileCard = await card.boundingBox();
+  const mobileAmount = await amount.boundingBox();
+  const mobileCurrency = await currency.boundingBox();
+  expect(mobileCurrency.y).toBeGreaterThan(mobileAmount.y + mobileAmount.height);
+  expect(mobileCurrency.x + mobileCurrency.width).toBeLessThanOrEqual(mobileCard.x + mobileCard.width);
+  expect(mobileCard.width).toBeLessThanOrEqual(390);
+  await card.screenshot({ path: testInfo.outputPath("orden-mobile.png") });
+});
+
 test("registra una orden ya cargada sin subirla nuevamente ni perder cotizaciones proveedor", async ({ page }) => {
   const state = await openProcessing(page, { selected: false });
   await expect(page.getByLabel("Archivo de orden de compra")).toBeVisible();

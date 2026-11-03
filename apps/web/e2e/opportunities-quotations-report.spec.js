@@ -84,6 +84,11 @@ test("navega desde Reportes y muestra las cotizaciones actuales agrupadas", asyn
   const quotations = page.getByRole("table", { name: "Cotizaciones de Proyecto comercial" });
   await expect(quotations.getByText("#301 Propuesta 301")).toBeVisible();
   await expect(quotations.getByText("#302 Propuesta 302")).toBeVisible();
+  await expect(quotations.getByRole("columnheader", { name: "Cumple los filtros", exact: true })).toBeVisible();
+  await expect(quotations.getByRole("row").filter({ hasText: "#301 Propuesta 301" })
+    .getByRole("cell", { name: "Cumple", exact: true })).toBeVisible();
+  await expect(quotations.getByRole("row").filter({ hasText: "#302 Propuesta 302" })
+    .getByRole("cell", { name: "No cumple", exact: true })).toBeVisible();
   await expect(quotations.getByRole("cell", { name: "5.22 USD", exact: true })).toBeVisible();
   await expect(quotations.getByRole("cell", { name: "104.40 MXN", exact: true })).toBeVisible();
   await expect(quotations.getByRole("cell", { name: "1 USD = 20 MXN (guardado)", exact: true })).toBeVisible();
@@ -96,6 +101,49 @@ test("navega desde Reportes y muestra las cotizaciones actuales agrupadas", asyn
   await expect(opportunityRow.getByText("#301: 104.40 USD", { exact: true })).toBeVisible();
   await expect(page.getByText("Cotizado USD: 208.80")).toBeVisible();
   await expect(page.getByRole("columnheader").filter({ hasText: /Estado|Activación|Fecha|Cierre/ })).toHaveCount(0);
+});
+
+test("organiza resumen y detalle en escritorio y permite consultar la tabla en movil", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  await openReport(page);
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  const results = page.getByRole("region", { name: "Resultados del reporte", exact: true });
+  await expect(results.getByText("11 oportunidades", { exact: true })).toBeVisible();
+  await expect(results.getByRole("list", { name: "Totales cotizados por moneda" })).toBeVisible();
+  await page.getByText(/Cotizaciones de #3:/).click();
+  await results.screenshot({ path: testInfo.outputPath("resultados-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const totals = results.locator(".report-totals");
+  await totals.scrollIntoViewIfNeeded();
+  expect(await totals.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(2);
+  const scroll = results.locator(".report-table-scroll");
+  expect(await scroll.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  await results.screenshot({ path: testInfo.outputPath("resultados-mobile.png") });
+});
+
+test("agrupa filtros y conserva opciones avanzadas en escritorio y movil", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  const requests = await openReport(page);
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  const filters = page.locator(".report-filters");
+  await expect(page.getByRole("region", { name: "Búsqueda y responsables" })).toBeVisible();
+  await expect(page.getByLabel("Activación de cotización")).not.toBeVisible();
+  await page.getByText("Opciones avanzadas", { exact: false }).click();
+  await page.getByLabel("Activación de cotización").selectOption("activada");
+  await page.getByLabel("Ordenar por").selectOption("amount");
+  await page.getByLabel("Dirección", { exact: true }).selectOption("asc");
+  await page.getByLabel("Oportunidades por página").selectOption("50");
+  await page.getByRole("button", { name: "Aplicar filtros" }).click();
+  await expect.poll(() => requests.at(-1)?.pageSize).toBe("50");
+  expect(requests.at(-1)).toMatchObject({ quotationActivation: "activada", sort: "amount", direction: "asc" });
+  await filters.screenshot({ path: testInfo.outputPath("filtros-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const grid = filters.locator(".report-filter-grid").first();
+  expect(await grid.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(1);
+  await filters.screenshot({ path: testInfo.outputPath("filtros-mobile.png") });
+  await page.getByRole("button", { name: "Limpiar", exact: true }).click();
+  await expect(page.getByLabel("Activación de cotización")).toHaveValue("all");
+  await expect(page.getByLabel("Oportunidades por página")).toHaveValue("10");
 });
 
 test("distingue una orden con valor cero de una cotizacion sin orden", async ({ page }) => {

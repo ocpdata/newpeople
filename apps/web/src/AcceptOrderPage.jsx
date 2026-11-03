@@ -5808,8 +5808,7 @@ export default function AcceptOrderPage() {
                           <header className="accept-order-won-documents-header">
                             <h4>Documentos de cierre</h4>
                             <p>
-                              Archivos seleccionados cuando la cotizacion fue
-                              declarada como ganada.
+                              Administra las órdenes de compra y los documentos de proveedores.
                             </p>
                           </header>
 
@@ -5830,7 +5829,7 @@ export default function AcceptOrderPage() {
                           !processingWonDocuments.error ? (
                             <div className="accept-order-won-documents-grid">
                               <section className="accept-order-won-documents-section">
-                                <h5>1) Ordenes de compra</h5>
+                                <h5>Órdenes de compra ({processingWonDocuments.purchaseOrders.length})</h5>
                                 <PurchaseOrderDocumentPicker
                                   versionId={quotationToProcess?.latestVersionId}
                                   quotationDocuments={processingWonDocuments.quotationDocuments}
@@ -5847,7 +5846,7 @@ export default function AcceptOrderPage() {
                                   })}
                                 />
                                 {processingWonDocuments.purchaseOrders.map((order) => (
-                                  <div key={`${order.source}:${order.documentId}`} role="group"
+                                  <div key={`${order.source}:${order.documentId}`} role="group" className="purchase-order-client-card"
                                     aria-label={`Orden de compra: ${order.originalFileName || "Documento"}`}>
                                     <article className="accept-order-won-document-item">
                                       <div className="accept-order-won-document-item-main">
@@ -5894,7 +5893,7 @@ export default function AcceptOrderPage() {
                               </section>
 
                               <section className="accept-order-won-documents-section">
-                                <h5>2) Cotizaciones de proveedores</h5>
+                                <h5>Cotizaciones de proveedores</h5>
                                 {processingWonDocuments.providerQuotes
                                   .length ? (
                                   <div className="accept-order-won-documents-list">

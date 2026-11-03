@@ -16453,6 +16453,115 @@ td {
   fill: currentColor;
 }
 
+.purchase-order-client-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dce6f2;
+  border-radius: 10px;
+  background: #fff;
+  display: grid;
+  gap: 14px;
+}
+
+.purchase-order-client-card .accept-order-won-document-item {
+  padding: 0 0 12px;
+  border: 0;
+  border-bottom: 1px solid #e2eaf4;
+  border-radius: 0;
+  align-items: center;
+}
+
+.purchase-order-value-fields,
+.purchase-order-document-picker {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.purchase-order-document-picker {
+  padding: 12px;
+  background: #eef4fa;
+  border-radius: 8px;
+  gap: 6px;
+}
+
+.purchase-order-document-picker .field-hint,
+.purchase-order-value-fields p {
+  margin: 0;
+}
+
+.purchase-order-value-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.purchase-order-picker-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.purchase-order-picker-controls label {
+  flex: 1;
+}
+
+.purchase-order-value-grid label,
+.purchase-order-picker-controls label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4c6380;
+}
+
+.purchase-order-value-grid input,
+.purchase-order-value-grid select,
+.purchase-order-picker-controls select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #cbd9e9;
+  border-radius: 7px;
+  background: #fff;
+  color: #10233f;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.purchase-order-value-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.purchase-order-value-actions .purchase-order-remove-btn {
+  background: transparent;
+  border-color: transparent;
+  color: #a52c35;
+}
+
+.purchase-order-value-actions .purchase-order-remove-btn:hover:not(:disabled) {
+  background: #fff1f2;
+  border-color: #efcdd1;
+}
+
+@media (max-width: 600px) {
+  .purchase-order-value-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .purchase-order-picker-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 .accept-order-modal-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 48px 48px 48px;
