@@ -21,19 +21,30 @@ const PRESETS = [
 ];
 const COMMERCIAL_STATES = [
   ["en_proceso", "En proceso"], ["ganada", "Ganada"],
-  ["perdida", "Perdida"], ["anulada", "Anulada"],
+  ["perdida", "Perdida"],
 ];
 const QUOTATION_STATES = [
   ["borrador", "Borrador"], ["en_aprobacion", "En aprobación"],
   ["aprobada", "Aprobada"], ["enviada", "Enviada"], ["ganada", "Ganada"],
   ["aceptada", "Aceptada"], ["rechazada", "Rechazada"], ["perdida", "Perdida"],
-  ["anulada", "Anulada"], ["no_vigente", "No vigente"],
+  ["no_vigente", "No vigente"],
 ];
 
 function formatAmount(value) {
   return value == null ? "-" : new Intl.NumberFormat("es-MX", {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   }).format(value);
+}
+
+function PurchaseOrderAmounts({ quotation }) {
+  const orders = quotation.purchaseOrders || [];
+  return orders.length ? orders.map((order) => (
+    <div key={`${order.source}:${order.documentId}`}>
+      {order.amount == null
+        ? "Valor sin registrar"
+        : `${formatAmount(order.amount)} ${order.currencyCode || "(sin moneda)"}`}
+    </div>
+  )) : <span>Sin orden de compra registrada</span>;
 }
 
 function quotationConversion(quotation, field) {
@@ -222,6 +233,7 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                       <th>Oportunidad</th><th>Cuenta</th><th>Vendedor / Preventa</th>
                       <th>Monto de oportunidad (USD)</th><th>Montos de cotizaciones</th>
                       <th>Equivalentes de cotizaciones (USD)</th><th>Tipo de cambio</th>
+                      <th>Valores de órdenes de compra</th>
                     </tr></thead>
                     <tbody>
                       {payload.items.map((item) => {
@@ -249,8 +261,16 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                                   <div key={quotation.id}>#{quotation.id}: {quotationConversion(quotation, "rate")}</div>
                                 )) : "-"}
                               </td>
+                              <td>
+                                {quotations.length ? quotations.map((quotation) => (
+                                  <div key={quotation.id}>
+                                    <strong>#{quotation.id}</strong>
+                                    <PurchaseOrderAmounts quotation={quotation} />
+                                  </div>
+                                )) : "-"}
+                              </td>
                             </tr>
-                            <tr><td colSpan={7}>
+                            <tr><td colSpan={8}>
                               <details>
                                 <summary>
                                   Cotizaciones de #{item.id}: {item.quotations.length} total,
@@ -259,7 +279,7 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                                 </summary>
                                 {!quotations.length ? <p>Sin cotizaciones para esta selección.</p> : (
                                   <table aria-label={`Cotizaciones de ${item.name}`}>
-                                    <thead><tr><th>Cotización</th><th>Versión</th><th>Importe original</th><th>Equivalente (USD)</th><th>Tipo de cambio</th><th>Coincide</th></tr></thead>
+                                    <thead><tr><th>Cotización</th><th>Versión</th><th>Importe original</th><th>Equivalente (USD)</th><th>Tipo de cambio</th><th>Valores de órdenes de compra</th><th>Coincide</th></tr></thead>
                                     <tbody>{quotations.map((quotation) => (
                                       <tr key={quotation.id} className={quotation.matchesFilters ? "report-quotation-match" : ""}>
                                         <td>#{quotation.id} {quotation.proposalName || "Sin nombre"}</td>
@@ -267,6 +287,7 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                                         <td>{formatAmount(quotation.totalAmount)} {quotation.currency || ""}</td>
                                         <td>{quotationConversion(quotation, "amount")}</td>
                                         <td>{quotationConversion(quotation, "rate")}</td>
+                                        <td><PurchaseOrderAmounts quotation={quotation} /></td>
                                         <td>{quotation.matchesFilters ? "Sí" : "No"}</td>
                                       </tr>
                                     ))}</tbody>

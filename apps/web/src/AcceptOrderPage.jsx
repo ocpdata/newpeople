@@ -5,6 +5,8 @@ import { es } from "date-fns/locale";
 import { api, getApiErrorMessage } from "./api";
 import { getTodayBusinessDate, toBusinessDateIso } from "./business-timezone";
 import QuotationStatusIcon from "./quotations/QuotationStatusIcon";
+import PurchaseOrderValueFields from "./quotations/PurchaseOrderValueFields";
+import PurchaseOrderDocumentPicker from "./quotations/PurchaseOrderDocumentPicker";
 import PurchaseOrderPrintPreviewModal from "./quotations/PurchaseOrderPrintPreviewModal";
 import { buildPurchaseOrderPrintModel } from "./quotations/buildPurchaseOrderPrintModel";
 import { getQuotationStatusTone } from "./quotations/quotationStatusPresentation";
@@ -268,7 +270,10 @@ function buildAcceptOrderWonDocumentsState() {
     loading: false,
     error: "",
     purchaseOrder: null,
+    purchaseOrders: [],
     providerQuotes: [],
+    quotationDocuments: [],
+    opportunityDocuments: [],
   };
 }
 
@@ -1173,7 +1178,11 @@ export default function AcceptOrderPage() {
       setState({
         loading: false,
         error: "",
+        quotationDocuments: Array.isArray(data?.quotationDocuments) ? data.quotationDocuments : [],
+        opportunityDocuments: Array.isArray(data?.opportunityDocuments) ? data.opportunityDocuments : [],
         purchaseOrder: data?.savedSelections?.purchaseOrder || null,
+        purchaseOrders: data?.savedSelections?.purchaseOrders ||
+          (data?.savedSelections?.purchaseOrder ? [data.savedSelections.purchaseOrder] : []),
         providerQuotes: Array.isArray(data?.savedSelections?.providerQuotes)
           ? data.savedSelections.providerQuotes
           : [],
@@ -5821,45 +5830,63 @@ export default function AcceptOrderPage() {
                           !processingWonDocuments.error ? (
                             <div className="accept-order-won-documents-grid">
                               <section className="accept-order-won-documents-section">
-                                <h5>1) Orden de compra</h5>
-                                {processingWonDocuments.purchaseOrder ? (
-                                  <article className="accept-order-won-document-item">
-                                    <div className="accept-order-won-document-item-main">
-                                      <strong>
-                                        {processingWonDocuments.purchaseOrder
-                                          .originalFileName || "Documento"}
-                                      </strong>
-                                      <span className="field-hint">
-                                        {formatWonDocumentSourceLabel(
-                                          processingWonDocuments.purchaseOrder
-                                            .source,
-                                        )}
-                                      </span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className="btn-secondary accept-order-won-document-download-btn"
-                                      onClick={() => {
-                                        void handleDownloadWonDocument(
-                                          processingWonDocuments.purchaseOrder,
-                                        );
-                                      }}
-                                      disabled={
-                                        downloadingWonDocumentKey ===
-                                        `${processingWonDocuments.purchaseOrder.source}:${processingWonDocuments.purchaseOrder.documentId}`
-                                      }
-                                      title="Descargar documento"
-                                      aria-label="Descargar documento"
-                                    >
-                                      <svg
-                                        viewBox="0 0 24 24"
-                                        aria-hidden="true"
+                                <h5>1) Ordenes de compra</h5>
+                                <PurchaseOrderDocumentPicker
+                                  versionId={quotationToProcess?.latestVersionId}
+                                  quotationDocuments={processingWonDocuments.quotationDocuments}
+                                  opportunityDocuments={processingWonDocuments.opportunityDocuments}
+                                  purchaseOrders={processingWonDocuments.purchaseOrders}
+                                  canUpdate={Boolean(processingData.permissions?.canUpdate)}
+                                  onSaved={(data) => setProcessingWonDocuments({
+                                    loading: false, error: "",
+                                    quotationDocuments: data.quotationDocuments || [],
+                                    opportunityDocuments: data.opportunityDocuments || [],
+                                    purchaseOrder: data.savedSelections.purchaseOrder,
+                                    purchaseOrders: data.savedSelections.purchaseOrders,
+                                    providerQuotes: data.savedSelections.providerQuotes,
+                                  })}
+                                />
+                                {processingWonDocuments.purchaseOrders.map((order) => (
+                                  <div key={`${order.source}:${order.documentId}`} role="group"
+                                    aria-label={`Orden de compra: ${order.originalFileName || "Documento"}`}>
+                                    <article className="accept-order-won-document-item">
+                                      <div className="accept-order-won-document-item-main">
+                                        <strong>{order.originalFileName || "Documento"}</strong>
+                                        <span className="field-hint">
+                                          {formatWonDocumentSourceLabel(order.source)}
+                                        </span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="btn-secondary accept-order-won-document-download-btn"
+                                        onClick={() => {
+                                          void handleDownloadWonDocument(order);
+                                        }}
+                                        disabled={
+                                          downloadingWonDocumentKey ===
+                                          `${order.source}:${order.documentId}`
+                                        }
+                                        title="Descargar documento"
+                                        aria-label="Descargar documento"
                                       >
-                                        <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
-                                      </svg>
-                                    </button>
-                                  </article>
-                                ) : (
+                                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                                          <path d="M12 3.75a.75.75 0 0 1 .75.75v8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V4.5a.75.75 0 0 1 .75-.75ZM5 18.25a.75.75 0 0 1 .75.75v.25a1 1 0 0 0 1 1h10.5a1 1 0 0 0 1-1V19a.75.75 0 0 1 1.5 0v.25a2.5 2.5 0 0 1-2.5 2.5H6.75a2.5 2.5 0 0 1-2.5-2.5V19a.75.75 0 0 1 .75-.75Z" />
+                                        </svg>
+                                      </button>
+                                    </article>
+                                    <PurchaseOrderValueFields
+                                      order={order}
+                                      versionId={quotationToProcess?.latestVersionId}
+                                      canUpdate={Boolean(processingData.permissions?.canUpdate)}
+                                      onRemoved={() => setProcessingWonDocuments((previous) => {
+                                        const purchaseOrders = previous.purchaseOrders.filter((item) =>
+                                          item.source !== order.source || item.documentId !== order.documentId);
+                                        return { ...previous, purchaseOrders, purchaseOrder: purchaseOrders[0] || null };
+                                      })}
+                                    />
+                                  </div>
+                                ))}
+                                {!processingWonDocuments.purchaseOrders.length && (
                                   <p className="field-hint">
                                     No hay orden de compra registrada.
                                   </p>

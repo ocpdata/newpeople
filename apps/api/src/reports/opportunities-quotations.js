@@ -1,14 +1,15 @@
 import { z } from "zod";
 import { query, withTransaction } from "../db.js";
+import { ensureQuotationWonDocumentsSchema } from "../quotation-won-documents-schema.js";
 import {
   buildQuotationVersionBaseSaleTotalJoin,
   buildQuotationVersionEffectiveTotalSql,
 } from "../quotation-totals-sql.js";
 
-const commercialStates = ["en_proceso", "ganada", "perdida", "anulada"];
+const commercialStates = ["en_proceso", "ganada", "perdida"];
 const quotationStates = [
   "borrador", "en_aprobacion", "aprobada", "enviada", "ganada",
-  "aceptada", "rechazada", "perdida", "anulada", "no_vigente",
+  "aceptada", "rechazada", "perdida", "no_vigente",
 ];
 const id = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional();
 const codes = (values) => z.string().transform((value) =>
@@ -41,7 +42,7 @@ export const reportFiltersSchema = z.object({
 
 export function buildReportSelection(user, filters) {
   const params = [];
-  const scope = [];
+  const scope = ["ocs.code <> 'anulada'"];
   // Both modules must allow the account; global access in one does not widen the other.
   if (!user.permissionSet.has("oportunidades.read_all") ||
       !user.permissionSet.has("cotizaciones.administracion")) {
@@ -81,7 +82,7 @@ export function buildReportSelection(user, filters) {
     }
   }
 
-  const quotationScope = [];
+  const quotationScope = ["(qs.code IS NULL OR qs.code <> 'anulada')"];
   if (filters.quotationActivation !== "all") {
     quotationScope.push("qas.code = ?");
     params.push(filters.quotationActivation);
@@ -183,6 +184,7 @@ function numberOrNull(value) {
 }
 
 export async function listOpportunitiesQuotationsReport(user, filters) {
+  await ensureQuotationWonDocumentsSchema();
   return withTransaction(async (connection) => {
     const read = async (sql, params) => {
       const [rows] = await connection.query(sql, params);
@@ -228,6 +230,16 @@ async function readReport(user, filters, read) {
     ${totalsJoin}
     WHERE lv.opportunity_id IN (${ids.map(() => "?").join(",")})
     ORDER BY lv.opportunity_id, lv.quotation_id DESC`, [...params, ...ids]) : [];
+  const versionIds = quotations.map((quotation) => Number(quotation.latest_version_id)).filter(Boolean);
+  const purchaseOrders = versionIds.length ? await read(
+    `SELECT qwd.quotation_version_id, qwd.document_id, qwd.document_source,
+            qwd.purchase_order_amount, qwd.purchase_order_currency, d.original_file_name
+     FROM quotation_won_documents qwd
+     INNER JOIN documents d ON d.id = qwd.document_id
+     WHERE qwd.quotation_version_id IN (${versionIds.map(() => "?").join(",")})
+       AND qwd.document_role = 'purchase_order' AND COALESCE(d.is_deleted, 0) = 0
+     ORDER BY qwd.quotation_version_id, qwd.created_at, qwd.id`, versionIds,
+  ) : [];
 
   return {
     page, pageSize: filters.pageSize, total,
@@ -257,6 +269,12 @@ async function readReport(user, filters, read) {
         statusName: quotation.status_name, activationStatus: quotation.activation_status,
         quotationDate: quotation.quotation_date, currency: quotation.currency_code,
         exchangeRate: numberOrNull(quotation.exchange_rate),
+        purchaseOrders: purchaseOrders.filter((order) =>
+          Number(order.quotation_version_id) === Number(quotation.latest_version_id)).map((order) => ({
+          documentId: Number(order.document_id), source: order.document_source,
+          originalFileName: order.original_file_name,
+          amount: numberOrNull(order.purchase_order_amount), currencyCode: order.purchase_order_currency,
+        })),
         totalAmount: numberOrNull(quotation.total_amount), matchesFilters: Boolean(Number(quotation.matches_filters)),
       })),
     })),

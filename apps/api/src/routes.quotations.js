@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 import { buffer as streamToBuffer } from "node:stream/consumers";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
+import { purchaseOrderValueSchema } from "./purchase-order-value.js";
+import { ensureQuotationWonDocumentsSchema } from "./quotation-won-documents-schema.js";
 import { QUOTATION_READ_PERMISSIONS as quotationPermissionCodes } from "../../../shared/quotation-permissions.js";
 import {
   DEFAULT_QUOTATION_VAT_PCT,
@@ -1501,7 +1503,6 @@ let ensureQuotationSectionItemsSchemaPromise;
 let ensureQuotationVersionsSchemaPromise;
 let ensureQuotationStatusesSchemaPromise;
 let ensureQuotationVersionDocumentsSchemaPromise;
-let ensureQuotationWonDocumentsSchemaPromise;
 let ensureQuotationProcessingSchemaPromise;
 let ensureQuotationDocumentImportsSchemaPromise;
 let ensureQuotationProviderDocumentImportPreviewJobSchemaPromise;
@@ -1969,42 +1970,6 @@ async function ensureQuotationVersionDocumentsSchema() {
   }
 
   await ensureQuotationVersionDocumentsSchemaPromise;
-}
-
-async function ensureQuotationWonDocumentsSchema() {
-  if (!ensureQuotationWonDocumentsSchemaPromise) {
-    ensureQuotationWonDocumentsSchemaPromise = (async () => {
-      await query(
-        `CREATE TABLE IF NOT EXISTS quotation_won_documents (
-          id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-          quotation_id BIGINT UNSIGNED NOT NULL,
-          quotation_version_id BIGINT UNSIGNED NOT NULL,
-          opportunity_id BIGINT UNSIGNED NOT NULL,
-          document_id BIGINT UNSIGNED NOT NULL,
-          document_source VARCHAR(40) NOT NULL,
-          document_role VARCHAR(40) NOT NULL,
-          created_by_user_id BIGINT UNSIGNED NOT NULL,
-          created_at DATETIME(3) NOT NULL DEFAULT NOW(3),
-          accepted_at DATETIME(3) NULL,
-          accepted_by_user_id BIGINT UNSIGNED NULL,
-          CONSTRAINT fk_qwd_quotation FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
-          CONSTRAINT fk_qwd_version FOREIGN KEY (quotation_version_id) REFERENCES quotation_versions(id) ON DELETE CASCADE,
-          CONSTRAINT fk_qwd_opportunity FOREIGN KEY (opportunity_id) REFERENCES opportunities(id) ON DELETE CASCADE,
-          CONSTRAINT fk_qwd_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
-          CONSTRAINT fk_qwd_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id),
-          CONSTRAINT fk_qwd_accepted_by FOREIGN KEY (accepted_by_user_id) REFERENCES users(id),
-          CONSTRAINT uq_qwd_version_role_document UNIQUE (quotation_version_id, document_role, document_id),
-          INDEX idx_qwd_version_role (quotation_version_id, document_role, created_at),
-          INDEX idx_qwd_version_source (quotation_version_id, document_source)
-        )`,
-      );
-    })().catch((error) => {
-      ensureQuotationWonDocumentsSchemaPromise = undefined;
-      throw error;
-    });
-  }
-
-  await ensureQuotationWonDocumentsSchemaPromise;
 }
 
 async function ensureQuotationProcessingSchema() {
@@ -3937,6 +3902,8 @@ async function listQuotationWonDocumentsSelections({ versionId }) {
     `SELECT qwd.document_id,
             qwd.document_source,
             qwd.document_role,
+            qwd.purchase_order_amount,
+            qwd.purchase_order_currency,
             qwd.accepted_at,
             qwd.accepted_by_user_id,
             d.public_id AS document_public_id,
@@ -3960,6 +3927,7 @@ function buildQuotationWonDocumentsPayload({
     : [];
   const savedSelections = {
     purchaseOrder: null,
+    purchaseOrders: [],
     providerQuotes: [],
   };
 
@@ -3980,10 +3948,13 @@ function buildQuotationWonDocumentsPayload({
       documentId,
       publicId: String(row.document_public_id || "").trim(),
       originalFileName: String(row.original_file_name || "documento").trim(),
+      amount: row.purchase_order_amount == null ? null : Number(row.purchase_order_amount),
+      currencyCode: row.purchase_order_currency || null,
     };
 
     if (role === "purchase_order") {
-      savedSelections.purchaseOrder = selectionItem;
+      savedSelections.purchaseOrders.push(selectionItem);
+      savedSelections.purchaseOrder ||= selectionItem;
     } else if (role === "provider_quote") {
       savedSelections.providerQuotes.push(selectionItem);
     }
@@ -4122,11 +4093,13 @@ async function saveQuotationWonDocumentsSelections({
 
   const now = new Date();
   const requestedAcceptedDate = String(acceptedAt || "").trim();
-  const existingAcceptedAt = parseDateOrNull(
-    existingAcceptedSnapshot?.acceptedAt,
-  );
+  const parsedAcceptedAt = existingAcceptedSnapshot?.acceptedAt
+    ? new Date(existingAcceptedSnapshot.acceptedAt)
+    : null;
+  const existingAcceptedAt = parsedAcceptedAt && !Number.isNaN(parsedAcceptedAt.getTime())
+    ? parsedAcceptedAt : null;
   const existingAcceptedDateText = existingAcceptedAt
-    ? toUtcIso(existingAcceptedAt)?.slice(0, 10) || ""
+    ? existingAcceptedAt.toISOString().slice(0, 10)
     : "";
   const shouldKeepAccepted = Boolean(existingAcceptedAt);
   const effectiveAccepted = Boolean(accept) || shouldKeepAccepted;
@@ -4140,8 +4113,8 @@ async function saveQuotationWonDocumentsSelections({
       ) {
         effectiveAcceptedAt = existingAcceptedAt;
       } else {
-        effectiveAcceptedAt =
-          parseDateOrNull(`${requestedAcceptedDate}T12:00:00.000Z`) || now;
+        const requestedDate = new Date(`${requestedAcceptedDate}T12:00:00.000Z`);
+        effectiveAcceptedAt = Number.isNaN(requestedDate.getTime()) ? now : requestedDate;
       }
     } else {
       effectiveAcceptedAt = existingAcceptedAt || now;
@@ -4155,19 +4128,34 @@ async function saveQuotationWonDocumentsSelections({
     : null;
 
   await withTransaction(async (conn) => {
+    const [existingValues] = await conn.query(
+      `SELECT document_id, document_source, purchase_order_amount, purchase_order_currency
+       FROM quotation_won_documents WHERE quotation_version_id = ? AND document_role = 'purchase_order'
+       ORDER BY created_at, id FOR UPDATE`,
+      [Number(version.id)],
+    );
     await conn.query(
       `DELETE FROM quotation_won_documents
        WHERE quotation_version_id = ?`,
       [Number(version.id)],
     );
 
-    for (const entry of dedupedSelections) {
+    // The single-order quotation editor must not remove orders added in processing.
+    const additionalOrders = existingValues.slice(1).map((row) => ({
+      role: "purchase_order", source: row.document_source, documentId: Number(row.document_id),
+    }));
+    const selectionsToSave = [...new Map([...dedupedSelections, ...additionalOrders].map((entry) => [
+      `${entry.role}:${entry.source}:${entry.documentId}`, entry,
+    ])).values()];
+    for (const entry of selectionsToSave) {
+      const savedValue = entry.role === "purchase_order" ? existingValues.find((row) =>
+        Number(row.document_id) === Number(entry.documentId) && row.document_source === entry.source) : null;
       await conn.query(
         `INSERT INTO quotation_won_documents
            (quotation_id, quotation_version_id, opportunity_id, document_id,
             document_source, document_role, created_by_user_id, created_at,
-            accepted_at, accepted_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            accepted_at, accepted_by_user_id, purchase_order_amount, purchase_order_currency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           Number(version.quotation_id),
           Number(version.id),
@@ -4179,6 +4167,8 @@ async function saveQuotationWonDocumentsSelections({
           now,
           effectiveAcceptedAt,
           effectiveAcceptedByUserId,
+          savedValue?.purchase_order_amount ?? null,
+          savedValue?.purchase_order_currency ?? null,
         ],
       );
     }
@@ -17664,6 +17654,187 @@ router.get(
     }
 
     return res.json(await listQuotationDocuments({ quotationId }));
+  },
+);
+
+router.get(
+  "/purchase-order-currencies",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (_req, res) => {
+    res.json(await query("SELECT code, name FROM currencies WHERE is_active = 1 ORDER BY name"));
+  },
+);
+
+router.post(
+  "/quotation-versions/:versionId/won-documents/purchase-orders",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({ message: "No autorizado para registrar ordenes de compra" });
+    }
+    const versionId = Number(req.params.versionId);
+    const parsed = z.object({
+      source: z.enum(quotationWonDocumentSourceCodes),
+      documentId: z.number().int().positive(),
+    }).safeParse(req.body);
+    if (!Number.isSafeInteger(versionId) || versionId <= 0 || !parsed.success) {
+      return res.status(400).json({ message: "Referencia de orden de compra invalida" });
+    }
+    const { source, documentId } = parsed.data;
+    const version = await getAccessibleQuotationVersion({ user: req.user, versionId });
+    if (!version) return res.status(404).json({ message: "Version no encontrada" });
+    if (Number(version.id) !== Number(version.latest_version_id) || !acceptOrderStatusCodes.has(version.status_code)) {
+      return res.status(400).json({ message: "Solo se pueden registrar ordenes en la version actual ganada o aceptada" });
+    }
+    await ensureQuotationWonDocumentsSchema();
+    const outcome = await withTransaction(async (conn) => {
+      await conn.query("SELECT id FROM quotation_versions WHERE id = ? FOR UPDATE", [versionId]);
+      const [documents] = await conn.query(
+        source === "quotation"
+          ? `SELECT d.id FROM documents d
+             INNER JOIN quotation_version_documents qvd ON qvd.document_id = d.id
+             INNER JOIN quotation_versions qv ON qv.id = qvd.quotation_version_id
+             WHERE d.id = ? AND qv.quotation_id = ? AND COALESCE(d.is_deleted, 0) = 0`
+          : `SELECT d.id FROM documents d
+             INNER JOIN opportunity_document_links odl ON odl.document_id = d.id
+             WHERE d.id = ? AND odl.opportunity_id = ? AND COALESCE(d.is_deleted, 0) = 0`,
+        [documentId, Number(source === "quotation" ? version.quotation_id : version.opportunity_id)],
+      );
+      if (!documents.length) return "missing";
+      const [existing] = await conn.query(
+        `SELECT id FROM quotation_won_documents
+         WHERE quotation_version_id = ? AND document_id = ? AND document_role = 'purchase_order' FOR UPDATE`,
+        [versionId, documentId],
+      );
+      if (existing.length) return "duplicate";
+      const [accepted] = await conn.query(
+        `SELECT accepted_at, accepted_by_user_id FROM quotation_won_documents
+         WHERE quotation_version_id = ? AND accepted_at IS NOT NULL ORDER BY accepted_at, id LIMIT 1`,
+        [versionId],
+      );
+      await conn.query(
+        `INSERT INTO quotation_won_documents
+         (quotation_id, quotation_version_id, opportunity_id, document_id, document_source,
+          document_role, created_by_user_id, accepted_at, accepted_by_user_id)
+         VALUES (?, ?, ?, ?, ?, 'purchase_order', ?, ?, ?)`,
+        [Number(version.quotation_id), versionId, Number(version.opportunity_id), documentId,
+          source, Number(req.user.id), accepted[0]?.accepted_at ?? null, accepted[0]?.accepted_by_user_id ?? null],
+      );
+      return "created";
+    });
+    if (outcome === "missing") return res.status(404).json({ message: "Documento no disponible en la cotizacion u oportunidad" });
+    if (outcome === "duplicate") return res.status(409).json({ message: "El archivo ya esta registrado como orden de compra" });
+    await logAuditEvent({
+      req, module: "cotizaciones", action: "purchase_order_added",
+      entityType: "quotation_version", entityId: versionId,
+      detail: "Orden de compra agregada al cierre desde procesamiento",
+      after: { documentId, source },
+    });
+    const [quotationDocuments, opportunityDocuments, savedSelectionRows] = await Promise.all([
+      listQuotationDocuments({ quotationId: Number(version.quotation_id) }),
+      listOpportunityDocumentsForQuotation({ opportunityId: Number(version.opportunity_id) }),
+      listQuotationWonDocumentsSelections({ versionId }),
+    ]);
+    res.json(buildQuotationWonDocumentsPayload({ quotationDocuments, opportunityDocuments, savedSelectionRows }));
+  },
+);
+
+router.delete(
+  "/quotation-versions/:versionId/won-documents/:source/:documentId",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({ message: "No autorizado para quitar la orden de compra" });
+    }
+    const versionId = Number(req.params.versionId);
+    const documentId = Number(req.params.documentId);
+    const source = req.params.source;
+    if (!Number.isSafeInteger(versionId) || versionId <= 0 ||
+        !Number.isSafeInteger(documentId) || documentId <= 0 ||
+        !quotationWonDocumentSourceCodes.includes(source)) {
+      return res.status(400).json({ message: "Referencia de orden de compra invalida" });
+    }
+    const version = await getAccessibleQuotationVersion({ user: req.user, versionId });
+    if (!version) return res.status(404).json({ message: "Version no encontrada" });
+    if (Number(version.id) !== Number(version.latest_version_id) || !acceptOrderStatusCodes.has(version.status_code)) {
+      return res.status(400).json({ message: "Solo se puede quitar la orden en la version actual ganada o aceptada" });
+    }
+    await ensureQuotationWonDocumentsSchema();
+    const removed = await withTransaction(async (conn) => {
+      const [rows] = await conn.query(
+        `SELECT qwd.id, qwd.purchase_order_amount, qwd.purchase_order_currency
+         FROM quotation_won_documents qwd
+         WHERE qwd.quotation_version_id = ? AND qwd.document_id = ? AND qwd.document_source = ?
+           AND qwd.document_role = 'purchase_order' FOR UPDATE`,
+        [versionId, documentId, source],
+      );
+      if (!rows.length) return null;
+      await conn.query("DELETE FROM quotation_won_documents WHERE id = ?", [rows[0].id]);
+      return rows[0];
+    });
+    if (!removed) return res.status(404).json({ message: "Orden de compra no encontrada" });
+    await logAuditEvent({
+      req, module: "cotizaciones", action: "purchase_order_removed",
+      entityType: "quotation_version", entityId: versionId,
+      detail: "Orden de compra retirada del cierre; archivo original conservado",
+      before: { documentId, source, amount: removed.purchase_order_amount, currencyCode: removed.purchase_order_currency },
+      after: { purchaseOrder: null },
+    });
+    res.json({ message: "Orden de compra retirada del cierre" });
+  },
+);
+
+router.patch(
+  "/quotation-versions/:versionId/won-documents/:source/:documentId/value",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({ message: "No autorizado para modificar el valor de la orden de compra" });
+    }
+    const versionId = Number(req.params.versionId);
+    const documentId = Number(req.params.documentId);
+    const source = req.params.source;
+    if (!Number.isSafeInteger(versionId) || versionId <= 0 ||
+        !Number.isSafeInteger(documentId) || documentId <= 0 ||
+        !quotationWonDocumentSourceCodes.includes(source)) {
+      return res.status(400).json({ message: "Referencia de orden de compra inválida" });
+    }
+    const parsed = purchaseOrderValueSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Valor de orden de compra inválido", errors: parsed.error.flatten() });
+    }
+    const version = await getAccessibleQuotationVersion({ user: req.user, versionId });
+    if (!version) return res.status(404).json({ message: "Versión no encontrada" });
+    if (Number(version.id) !== Number(version.latest_version_id) || !acceptOrderStatusCodes.has(version.status_code)) {
+      return res.status(400).json({ message: "Solo se puede registrar el valor en la versión actual ganada o aceptada" });
+    }
+    const currencies = await query("SELECT code FROM currencies WHERE code = ? AND is_active = 1", [parsed.data.currencyCode]);
+    if (!currencies.length) return res.status(400).json({ message: "Moneda no disponible" });
+    await ensureQuotationWonDocumentsSchema();
+    const saved = await withTransaction(async (conn) => {
+      const [rows] = await conn.query(
+        `SELECT qwd.id, qwd.purchase_order_amount, qwd.purchase_order_currency
+         FROM quotation_won_documents qwd INNER JOIN documents d ON d.id = qwd.document_id
+         WHERE qwd.quotation_version_id = ? AND qwd.document_id = ? AND qwd.document_source = ?
+           AND qwd.document_role = 'purchase_order' AND COALESCE(d.is_deleted, 0) = 0 FOR UPDATE`,
+        [versionId, documentId, source],
+      );
+      if (!rows.length) return null;
+      await conn.query(
+        "UPDATE quotation_won_documents SET purchase_order_amount = ?, purchase_order_currency = ? WHERE id = ?",
+        [parsed.data.amount, parsed.data.currencyCode, rows[0].id],
+      );
+      return rows[0];
+    });
+    if (!saved) return res.status(404).json({ message: "Orden de compra no encontrada" });
+    await logAuditEvent({
+      req, module: "cotizaciones", action: "purchase_order_value_updated",
+      entityType: "quotation_version", entityId: versionId,
+      detail: "Valor y moneda de orden de compra actualizados",
+      before: { amount: saved.purchase_order_amount, currencyCode: saved.purchase_order_currency },
+      after: { documentId, source, ...parsed.data },
+    });
+    res.json({ message: "Valor de orden de compra guardado", ...parsed.data });
   },
 );
 

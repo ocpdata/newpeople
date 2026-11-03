@@ -5,6 +5,10 @@ const quotation = (id, status, matches, currency = "USD") => ({
   statusCode: status, statusName: status === "aceptada" ? "Aceptada" : "Borrador",
   activationStatus: "Activada", quotationDate: "2026-11-02",
   currency, exchangeRate: currency === "USD" ? 1 : 20, totalAmount: 104.4, matchesFilters: matches,
+  purchaseOrders: id === 301 ? [
+    { documentId: 1, source: "quotation", originalFileName: "orden-usd.pdf", amount: 1500, currencyCode: "USD" },
+    { documentId: 2, source: "opportunity", originalFileName: "orden-mxn.pdf", amount: 3000, currencyCode: "MXN" },
+  ] : [{ documentId: 3, source: "quotation", originalFileName: "orden-pendiente.pdf", amount: null, currencyCode: null }],
 });
 const opportunity = {
   id: 3, name: "Proyecto comercial", accountId: 1, accountName: "Cuenta visible",
@@ -61,6 +65,7 @@ test("navega desde Reportes y muestra las cotizaciones actuales agrupadas", asyn
   await openReport(page);
   await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
   await expect(page.getByRole("heading", { name: "Oportunidades y cotizaciones" })).toBeVisible();
+  await expect(page.getByLabel("Anulada", { exact: true })).toHaveCount(0);
   await expect(page.getByText("#3 Proyecto comercial", { exact: true })).toBeVisible();
   const opportunityRow = page.getByRole("row").filter({ has: page.getByText("#3 Proyecto comercial", { exact: true }) });
   await expect(opportunityRow.getByRole("cell", { name: "300.00", exact: true })).toBeVisible();
@@ -69,6 +74,11 @@ test("navega desde Reportes y muestra las cotizaciones actuales agrupadas", asyn
   await expect(opportunityRow.getByRole("cell", { name: /#302: 5.22 USD/ })).toBeVisible();
   await expect(opportunityRow.getByRole("cell", { name: /#302: 1 USD = 20 MXN/ })).toBeVisible();
   await expect(page.getByRole("columnheader", { name: "Equivalentes de cotizaciones (USD)", exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Valores de órdenes de compra", exact: true })).toBeVisible();
+  await expect(opportunityRow.getByText("1,500.00 USD", { exact: true })).toBeVisible();
+  await expect(opportunityRow.getByText("3,000.00 MXN", { exact: true })).toBeVisible();
+  await expect(opportunityRow.getByText("Valor sin registrar", { exact: true })).toBeVisible();
+  await expect(page.getByText(/orden-usd\.pdf|orden-mxn\.pdf|orden-pendiente\.pdf/)).toHaveCount(0);
   await expect(opportunityRow.getByText(/Tipo de cambio faltante o inválido/)).toHaveCount(0);
   await page.getByText(/Cotizaciones de #3:/).click();
   const quotations = page.getByRole("table", { name: "Cotizaciones de Proyecto comercial" });
@@ -77,13 +87,37 @@ test("navega desde Reportes y muestra las cotizaciones actuales agrupadas", asyn
   await expect(quotations.getByRole("cell", { name: "5.22 USD", exact: true })).toBeVisible();
   await expect(quotations.getByRole("cell", { name: "104.40 MXN", exact: true })).toBeVisible();
   await expect(quotations.getByRole("cell", { name: "1 USD = 20 MXN (guardado)", exact: true })).toBeVisible();
+  await expect(quotations.getByText("1,500.00 USD", { exact: true })).toBeVisible();
   await page.getByLabel("Mostrar cotizaciones").selectOption("matching");
   await expect(quotations.getByText("#301 Propuesta 301")).toBeVisible();
   await expect(quotations.getByText("#302 Propuesta 302")).toHaveCount(0);
   await expect(opportunityRow.getByText("#302: 104.40 MXN")).toHaveCount(0);
+  await expect(opportunityRow.getByText("Valor sin registrar", { exact: true })).toHaveCount(0);
   await expect(opportunityRow.getByText("#301: 104.40 USD", { exact: true })).toBeVisible();
   await expect(page.getByText("Cotizado USD: 208.80")).toBeVisible();
   await expect(page.getByRole("columnheader").filter({ hasText: /Estado|Activación|Fecha|Cierre/ })).toHaveCount(0);
+});
+
+test("distingue una orden con valor cero de una cotizacion sin orden", async ({ page }) => {
+  await openReport(page);
+  await page.route("**/api/reports/opportunities-quotations?**", (route) => route.fulfill({
+    json: {
+      ...payload,
+      items: [{
+        ...opportunity,
+        quotations: [
+          { ...quotation(301, "aceptada", true), purchaseOrders: [
+            { documentId: 1, source: "quotation", originalFileName: "orden-cero.pdf", amount: 0, currencyCode: "USD" },
+          ] },
+          { ...quotation(302, "borrador", true), purchaseOrders: [] },
+        ],
+      }],
+    },
+  }));
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  const opportunityRow = page.getByRole("row").filter({ has: page.getByText("#3 Proyecto comercial", { exact: true }) });
+  await expect(opportunityRow.getByText("0.00 USD", { exact: true })).toBeVisible();
+  await expect(opportunityRow.getByText("Sin orden de compra registrada", { exact: true })).toBeVisible();
 });
 
 test("muestra la falta de tipo de cambio sin asumir una conversión", async ({ page }) => {

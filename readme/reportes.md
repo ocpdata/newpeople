@@ -24,6 +24,9 @@ pueden consultarse, para evitar interpretar informacion restringida como ausente
 ## Reglas del reporte
 
 - Una fila principal por oportunidad, con sus cotizaciones desplegables.
+- Las oportunidades y cotizaciones anuladas se excluyen siempre de resultados,
+  detalle, catalogos y totales. No se ofrece Anulada como filtro de estado.
+  Una oportunidad con solo cotizaciones anuladas se considera sin cotizaciones.
 - La misma fila muestra el monto de la oportunidad en USD y el monto de cada
   cotizacion visible con su identificador y moneda, sin sumar monedas distintas.
 - La tabla principal y el detalle no muestran columnas de estado, activacion o
@@ -39,6 +42,13 @@ pueden consultarse, para evitar interpretar informacion restringida como ausente
   importe de la fila principal identifica su cotizacion; para cotizaciones en USD,
   las columnas de conversion y tipo de cambio muestran un guion.
 - Se consulta exclusivamente la version actual, referenciada por `latest_version_id`.
+- La columna Valores de ordenes de compra muestra, para cada cotizacion visible,
+  solo el valor y la moneda de cada orden de compra de su version actual,
+  sin nombres de archivo. Se incluye tanto en la fila principal como en el
+  detalle. No suma monedas distintas ni agrega estos valores a los totales.
+  Los documentos eliminados y las ordenes historicas no se incluyen.
+  Si falta el valor indica Valor sin registrar; si no hay orden seleccionada,
+  indica Sin orden de compra registrada.
 - Oportunidad ganada, cotizacion ganada y cotizacion aceptada son condiciones distintas.
 - Una cotizacion historica aceptada no convierte su version actual en aceptada.
 - Las oportunidades sin cotizaciones se conservan cuando cumplen los filtros.
@@ -96,6 +106,8 @@ aceptacion. No se incluye filtro de fecha de aceptacion en esta version.
   devuelve cuentas y responsables dentro del alcance autorizado.
 - `GET /api/reports/opportunities-quotations`
   devuelve `{page, pageSize, total, summary, items}`.
+- Cada cotizacion incluye `purchaseOrders` con `documentId`, `source`,
+  `originalFileName`, `amount` y `currencyCode` por orden.
 - Parametros: `preset`, `accountId`, `sellerUserId`, `presalesUserId`,
   `commercialStatuses`, `quotationStatuses` (codigos separados por coma),
   `quotationPresence`, `opportunityActivation`, `quotationActivation`,

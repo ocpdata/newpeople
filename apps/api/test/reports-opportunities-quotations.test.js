@@ -10,6 +10,9 @@ vi.mock("../src/db.js", () => {
     withTransaction: (work) => work({ query: async (...args) => [await query(...args)] }),
   };
 });
+vi.mock("../src/quotation-won-documents-schema.js", () => ({
+  ensureQuotationWonDocumentsSchema: vi.fn(),
+}));
 
 import { config } from "../src/config.js";
 import { query } from "../src/db.js";
@@ -61,6 +64,10 @@ beforeAll(async () => {
       status_id INT, summary_discount_mode VARCHAR(30), summary_discount_value DECIMAL(12,2),
       summary_distribution_mode VARCHAR(30), summary_vat_mode VARCHAR(30), summary_vat_pct DECIMAL(6,2)`,
     quotation_sections: "id INT PRIMARY KEY, quotation_version_id INT",
+    documents: "id INT PRIMARY KEY, original_file_name VARCHAR(100), is_deleted INT",
+    quotation_won_documents: `id INT PRIMARY KEY, quotation_version_id INT, document_id INT,
+      document_source VARCHAR(40), document_role VARCHAR(40), purchase_order_amount DECIMAL(15,2),
+      purchase_order_currency CHAR(3), created_at DATETIME`,
     quotation_section_items: `id INT PRIMARY KEY, quotation_section_id INT, quantity DECIMAL(12,2),
       list_price_unit DECIMAL(12,2), manufacturer_discount_pct DECIMAL(6,2),
       import_cost_pct DECIMAL(6,2), profit_margin_pct DECIMAL(6,2),
@@ -73,9 +80,9 @@ beforeAll(async () => {
   await connection.query("INSERT INTO users VALUES (19, 'Vendedor'), (20, 'Preventa')");
   await connection.query("INSERT INTO account_owners VALUES (1, 19)");
   await connection.query("INSERT INTO opportunity_sales_stages VALUES (1, 'Waiting')");
-  await connection.query("INSERT INTO opportunity_commercial_statuses VALUES (1, 'en_proceso', 'En proceso'), (2, 'ganada', 'Ganada')");
+  await connection.query("INSERT INTO opportunity_commercial_statuses VALUES (1, 'en_proceso', 'En proceso'), (2, 'ganada', 'Ganada'), (3, 'anulada', 'Anulada')");
   await connection.query("INSERT INTO opportunity_activation_statuses VALUES (1, 'activada', 'Activada'), (2, 'desactivada', 'Desactivada')");
-  await connection.query("INSERT INTO quotation_statuses VALUES (1, 'aceptada', 'Aceptada'), (2, 'ganada', 'Ganada'), (3, 'borrador', 'Borrador')");
+  await connection.query("INSERT INTO quotation_statuses VALUES (1, 'aceptada', 'Aceptada'), (2, 'ganada', 'Ganada'), (3, 'borrador', 'Borrador'), (4, 'anulada', 'Anulada')");
   await connection.query("INSERT INTO quotation_activation_statuses VALUES (1, 'activada', 'Activada'), (2, 'desactivada', 'Desactivada')");
   for (let id = 1; id <= 6; id += 1) {
     await connection.query(`INSERT INTO opportunities VALUES
@@ -104,6 +111,18 @@ beforeAll(async () => {
   }
   await connection.query(`INSERT INTO quotation_versions VALUES
     (5011, 501, 1, 'Histórica aceptada', '2026-10-01', 'USD', 1, 1, 'percentage', 0, 'total', 'total', 16)`);
+  await connection.query(`INSERT INTO documents VALUES
+    (1, 'orden-usd.pdf', 0), (2, 'orden-mxn.pdf', 0), (3, 'orden-sin-valor.pdf', 0),
+    (4, 'eliminada.pdf', 1), (5, 'proveedor.pdf', 0),
+    (6, 'historica.pdf', 0), (7, 'cuenta-ajena.pdf', 0)`);
+  await connection.query(`INSERT INTO quotation_won_documents VALUES
+    (1, 3011, 1, 'quotation', 'purchase_order', 1500, 'USD', '2026-11-03'),
+    (2, 3011, 2, 'opportunity', 'purchase_order', 3000, 'MXN', '2026-11-03'),
+    (3, 3021, 3, 'quotation', 'purchase_order', NULL, NULL, '2026-11-03'),
+    (4, 3011, 4, 'quotation', 'purchase_order', 999, 'USD', '2026-11-03'),
+    (5, 3011, 5, 'quotation', 'provider_quote', 888, 'USD', '2026-11-03'),
+    (6, 5011, 6, 'quotation', 'purchase_order', 777, 'USD', '2026-11-03'),
+    (7, 6011, 7, 'quotation', 'purchase_order', 666, 'USD', '2026-11-03')`);
   // CTE fixtures allow repeated references, which MySQL temporary tables cannot support.
   fixtureTableNames = Object.keys(tables);
   await refreshFixtures();
@@ -117,6 +136,32 @@ beforeAll(async () => {
 afterAll(async () => { await connection?.end(); });
 
 describe("Opportunity and quotation report", () => {
+  it("excludes cancelled opportunities and quotations from results, totals, presence and catalogs", async () => {
+    try {
+      await connection.query("UPDATE opportunities SET commercial_status_id = 3 WHERE id = 6");
+      await connection.query("UPDATE quotation_versions SET status_id = 4 WHERE id IN (3011, 5012)");
+      await refreshFixtures();
+      const currentUser = user(["oportunidades.read_all", "cotizaciones.administracion"]);
+      const result = await report({}, currentUser);
+      expect(result.items.map((item) => item.id)).toEqual([5, 4, 3, 2, 1]);
+      expect(result.items.find((item) => item.id === 5).quotations).toEqual([]);
+      expect(result.items.find((item) => item.id === 3).quotations.map((item) => item.id)).toEqual([302]);
+      expect(result.items.flatMap((item) => item.quotations).flatMap((item) => item.purchaseOrders)
+        .map((item) => item.documentId)).toEqual([3]);
+      expect(result.summary).toMatchObject({
+        opportunityCount: 5, opportunityAmountUsd: 1500, quotationCount: 3, acceptedCount: 1,
+      });
+      expect(result.summary.currencies.find((item) => item.currency === "USD").amount).toBeCloseTo(156.6);
+      expect((await report({ quotationPresence: "without" }, currentUser)).items.map((item) => item.id)).toEqual([5, 1]);
+      expect((await report({ preset: "accepted" }, currentUser)).items.map((item) => item.id)).toEqual([2]);
+      expect((await getReportCatalogs(currentUser)).accounts).toEqual([{ id: 1, name: "Visible" }]);
+    } finally {
+      await connection.query("UPDATE opportunities SET commercial_status_id = 2 WHERE id = 6");
+      await connection.query("UPDATE quotation_versions SET status_id = 1 WHERE id = 3011");
+      await connection.query("UPDATE quotation_versions SET status_id = 3 WHERE id = 5012");
+      await refreshFixtures();
+    }
+  });
   it.each([
     ["all", [5, 4, 3, 2, 1]],
     ["won", [4, 3, 1]],
@@ -154,6 +199,22 @@ describe("Opportunity and quotation report", () => {
     expect(result.summary.currencies[0].amount).toBeCloseTo(156.6);
     expect(result.summary.currencies[0].matchingAmount).toBeCloseTo(104.4);
     expect((await report({ preset: "both", quotationStatuses: "borrador" })).total).toBe(0);
+  });
+
+  it("returns each current quotation's orders without combining currencies or including deleted, historical or unauthorized files", async () => {
+    const result = await report();
+    const quotations = result.items.flatMap((item) => item.quotations);
+    expect(quotations.find((item) => item.id === 301).purchaseOrders).toEqual([
+      { documentId: 1, source: "quotation", originalFileName: "orden-usd.pdf", amount: 1500, currencyCode: "USD" },
+      { documentId: 2, source: "opportunity", originalFileName: "orden-mxn.pdf", amount: 3000, currencyCode: "MXN" },
+    ]);
+    expect(quotations.find((item) => item.id === 302).purchaseOrders).toEqual([
+      { documentId: 3, source: "quotation", originalFileName: "orden-sin-valor.pdf", amount: null, currencyCode: null },
+    ]);
+    expect(quotations.find((item) => item.id === 501).purchaseOrders).toEqual([]);
+    expect(quotations.flatMap((item) => item.purchaseOrders).map((item) => item.documentId)).toEqual([3, 1, 2]);
+    expect(result.summary.opportunityAmountUsd).toBe(1500);
+    expect(result.summary.currencies.find((item) => item.currency === "USD").amount).toBeCloseTo(365.4);
   });
 
   it("separates currency totals, applies the existing discount and VAT formula, and paginates opportunities", async () => {
@@ -240,6 +301,7 @@ describe("Opportunity and quotation report", () => {
     { dateFrom: "2026-02-30" }, { page: 0 }, { pageSize: 1000 },
     { sort: "id; DROP TABLE opportunities" }, { accountId: "invalid" },
     { quotationStatuses: "not_a_state" }, { unsupported: "value" },
+    { quotationStatuses: "anulada" }, { commercialStatuses: "anulada" },
   ])("rejects malformed filters %j", (filters) => {
     expect(reportFiltersSchema.safeParse(filters).success).toBe(false);
   });
