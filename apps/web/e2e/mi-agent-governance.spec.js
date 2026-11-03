@@ -4663,6 +4663,28 @@ test.describe("Mi Coach governance and workspaces", () => {
       body: { token: "44a6bf85-cd5a-431e-9697-fd0b2da5e9f6", version: 1 } }]);
   });
 
+  test("Coach ofrece preguntas para probar y las carga sin enviarlas", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page);
+    await openMiCoach(page);
+    await openCoachConversation(page);
+    const suggestions = page.getByText("Más preguntas para probar Coach");
+    await suggestions.click();
+    const questions = page.locator(".mi-agent-coach-test-questions");
+    await expect(questions).toContainText("Prioridades y cartera");
+    await expect(questions).toContainText("Conversación, límites y acciones");
+    const question = "¿Cómo voy contra mi cuota?";
+    await questions.getByRole("button", { name: question }).click();
+    await expect(
+      page.getByPlaceholder("Escribe tu pregunta para el Coach..."),
+    ).toHaveValue(question);
+    await expect(
+      page.getByRole("button", { name: "Preguntar" }),
+    ).toBeEnabled();
+    await expect(page.getByText("La oportunidad Proyecto B")).toHaveCount(0);
+  });
+
   test("cambiar de espacio conserva contexto separado de Coach, Cliente existente y Cuenta nueva", async ({
     page,
   }) => {
@@ -5079,7 +5101,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     );
   });
 
-  test("limpia la conversación del Coach y no la restaura al recargar", async ({
+  test("inicia una nueva conversación del Coach y no restaura la anterior al recargar", async ({
     page,
   }) => {
     await mockMiCoachApi(page, { withCoachInterface: true });
@@ -5089,11 +5111,11 @@ test.describe("Mi Coach governance and workspaces", () => {
       page.getByText("La oportunidad aún no está lista para avanzar."),
     ).toBeVisible();
     page.once("dialog", (dialog) => {
-      expect(dialog.message()).toContain("Se cerrará esta conversación");
+      expect(dialog.message()).toContain("iniciar una nueva");
       expect(dialog.message()).toContain("3 acciones pendientes");
       dialog.accept();
     });
-    await page.getByRole("button", { name: "Limpiar conversación" }).click();
+    await page.getByRole("button", { name: "Nueva conversación" }).click();
 
     await expect(
       page.getByText("La oportunidad aún no está lista para avanzar."),
@@ -6660,9 +6682,38 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
 
     const semantic = page.getByLabel("Fundamento del Coach");
-    await expect(page.getByRole("switch", { name: "Mostrar fundamento" })).toHaveCount(0);
-    const foundation = page.locator(".mi-agent-coach-foundation");
-    await expect(foundation).toHaveJSProperty("open", true);
+    const foundationToggle = page.getByRole("switch", {
+      name: "Mostrar fundamento",
+    });
+    await expect(foundationToggle).toBeVisible();
+    await expect(foundationToggle).toBeEnabled();
+    await expect(foundationToggle).not.toBeChecked();
+    const newConversationButton = page.getByRole("button", {
+      name: "Nueva conversación",
+    });
+    const toolbar = page.locator(
+      ".mi-agent-coach-conversation-heading > .mi-agent-coach-conversation-actions",
+    );
+    const toolbarBox = await toolbar.boundingBox();
+    const buttonBox = await newConversationButton.boundingBox();
+    const toggleBox = await foundationToggle.boundingBox();
+    const panelBox = await page.locator(".mi-agent-coach-panel").boundingBox();
+    expect(toolbarBox).not.toBeNull();
+    expect(buttonBox).not.toBeNull();
+    expect(toggleBox).not.toBeNull();
+    expect(panelBox).not.toBeNull();
+    expect(panelBox.x + panelBox.width - (toolbarBox.x + toolbarBox.width)).toBeLessThan(30);
+    expect(
+      Math.abs(
+        buttonBox.y +
+          buttonBox.height / 2 -
+          (toggleBox.y + toggleBox.height / 2),
+      ),
+    ).toBeLessThan(2);
+    expect(toggleBox.x).toBeGreaterThan(buttonBox.x + buttonBox.width);
+    await expect(semantic).toBeHidden();
+    await foundationToggle.check();
+    await expect(semantic).toBeVisible();
     await expect(
       semantic.getByRole("heading", { name: "Hechos" }),
     ).toBeVisible();
@@ -6675,10 +6726,9 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(
       semantic.getByRole("heading", { name: "Recomendación" }),
     ).toBeVisible();
-
-    await foundation.getByText("Fundamento de la respuesta").click();
+    await foundationToggle.uncheck();
     await expect(semantic).toBeHidden();
-    await foundation.getByText("Fundamento de la respuesta").click();
+    await foundationToggle.check();
     await expect(semantic).toBeVisible();
     await expect(diagnosis).toBeVisible();
 

@@ -1,4 +1,5 @@
-import { Trash2, CheckCircle2, AlertCircle, Clock3, ArrowRight, Pencil, X } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, AlertCircle, Clock3, ArrowRight, Pencil, X } from "lucide-react";
 import {
   COACH_OPERATION_STATUS_META,
   COACH_RESPONSE_TYPE_LABELS,
@@ -40,6 +41,62 @@ const COACH_VISIBLE_RESPONSE_TYPES = new Set([
   "handoff",
 ]);
 
+const COACH_FOUNDATION_VISIBILITY_KEY = "mi-agent-coach-show-foundation";
+
+const COACH_TEST_QUESTION_GROUPS = [
+  {
+    title: "Prioridades y cartera",
+    questions: [
+      "¿Qué oportunidades debería priorizar esta semana y por qué?",
+      "¿Cuáles de mis oportunidades tienen mayor riesgo?",
+      "¿Qué oportunidades abiertas no tienen siguiente paso?",
+      "¿Qué oportunidades están vencidas o requieren seguimiento?",
+      "¿Cómo está mi pipeline del trimestre y qué debería atender primero?",
+      "¿Qué oportunidades están más cerca de cerrarse?",
+    ],
+  },
+  {
+    title: "Desempeño y desarrollo comercial",
+    questions: [
+      "¿Cómo voy contra mi cuota?",
+      "¿Qué puedo mejorar para aumentar mi tasa de cierre?",
+      "¿Qué patrones ves en mis oportunidades ganadas y perdidas?",
+      "¿Qué hábito comercial debería trabajar esta semana?",
+      "¿Cómo puedo mejorar mi descubrimiento de necesidades con los clientes?",
+      "Dame un plan concreto para mejorar mi seguimiento comercial.",
+    ],
+  },
+  {
+    title: "Agenda y próximos pasos",
+    questions: [
+      "¿Qué tengo pendiente para hoy?",
+      "¿Qué seguimientos tengo que hacer esta semana?",
+      "¿Qué debería hacer hoy con mis oportunidades más importantes?",
+      "¿Qué oportunidades llevan más tiempo sin actividad?",
+    ],
+  },
+  {
+    title: "Una oportunidad o cuenta",
+    questions: [
+      "Dame el detalle de la oportunidad [nombre de una oportunidad real].",
+      "¿Qué siguiente paso recomiendas para [oportunidad] y por qué?",
+      "¿Qué sabemos de [cuenta existente] y qué seguimiento conviene?",
+      "¿Qué contactos están relacionados con [cuenta u oportunidad]?",
+    ],
+  },
+  {
+    title: "Conversación, límites y acciones",
+    questions: [
+      "Primero dime qué debo priorizar; después, ¿cómo puedo avanzar con la primera oportunidad?",
+      "¿Qué oportunidades de mi cartera necesitan atención?",
+      "¿Y qué hago con la primera?",
+      "¿Qué sabes de una oportunidad que no aparece en mi cartera?",
+      "¿Cuántos empleados tiene una empresa famosa?",
+      "¿Puedes registrar una llamada de seguimiento para [oportunidad]?",
+    ],
+  },
+];
+
 function hasCoachFoundation(result) {
   return Boolean(
     result?.facts?.length ||
@@ -50,6 +107,17 @@ function hasCoachFoundation(result) {
 }
 
 export function CoachConversationPanel({ applyCoachClarification, askCoach, askingCoach, canCreateAccounts, canCreateActions, canCreateContacts, canReadCustomerIntelligence, canReadLeads, canResolveLeads, canUpdateAccounts, canUpdateCalendar, canUpdateContacts, canUpdateLeads, cancelCoachTurn, cancelingCoach, cancelPendingCoachOperation, clearCoachConversation, coachAccounts, coachContacts, coachContext, coachMessages, coachOperationAction, coachOpportunities, coachPendingOperations, coachQuestion, coachRecentOperations, coachThreadRef, coachUndoOperationId, continueCoachOperation, hasCoachConversation, loadingCoachContext, openCoachDetailHandoff, openCoachOperationConfirmation, requestCoachGeneralScope, setCoachQuestion, undoCoachOperation }) {
+  const [showCoachFoundation, setShowCoachFoundation] = useState(
+    () => window.localStorage.getItem(COACH_FOUNDATION_VISIBILITY_KEY) === "true",
+  );
+  const hasFoundation = coachMessages.some(
+    (message) => message.role !== "seller" && hasCoachFoundation(message.result),
+  );
+  const updateCoachFoundationVisibility = (visible) => {
+    setShowCoachFoundation(visible);
+    window.localStorage.setItem(COACH_FOUNDATION_VISIBILITY_KEY, String(visible));
+  };
+
   return (
     <section className="mi-agent-coach-panel">
       <div className="mi-agent-section-heading">
@@ -201,8 +269,58 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
           )}
         </div>
       </div>
+      <details className="mi-agent-coach-test-questions">
+        <summary>Más preguntas para probar Coach</summary>
+        <p>
+          Selecciona una pregunta para cargarla en el campo de texto. En las
+          preguntas con corchetes, sustituye el texto por un registro real.
+        </p>
+        {COACH_TEST_QUESTION_GROUPS.map((group) => (
+          <section key={group.title}>
+            <strong>{group.title}</strong>
+            <div className="mi-agent-coach-suggestions">
+              {group.questions.map((question) => (
+                <button
+                  type="button"
+                  key={question}
+                  disabled={askingCoach}
+                  onClick={() => setCoachQuestion(question)}
+                >
+                  {question}
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
+      </details>
       <div className="mi-agent-coach-conversation-heading">
-        <div>
+        <div className="mi-agent-coach-conversation-actions">
+          <button
+            type="button"
+            className="mi-agent-secondary-button"
+            disabled={askingCoach || !hasCoachConversation}
+            onClick={clearCoachConversation}
+          >
+            Nueva conversación
+          </button>
+          <label className="mi-agent-coach-foundation-toggle">
+            <span>Mostrar fundamento</span>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={showCoachFoundation}
+              disabled={!hasFoundation}
+              onChange={(event) =>
+                updateCoachFoundationVisibility(event.target.checked)
+              }
+            />
+            <span
+              className="mi-agent-coach-foundation-toggle-track"
+              aria-hidden="true"
+            />
+          </label>
+        </div>
+        <div className="mi-agent-coach-conversation-label">
           <strong>Conversación</strong>
           <small>
             {coachMessages.length
@@ -210,16 +328,6 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
               : "Inicia una conversación con tu contexto actual"}
           </small>
         </div>
-        <button
-          type="button"
-          className="btn-ghost mi-agent-coach-clear-button"
-          disabled={askingCoach || !hasCoachConversation}
-          onClick={clearCoachConversation}
-          title="Limpiar conversación"
-        >
-          <Trash2 size={14} aria-hidden="true" />
-          Limpiar conversación
-        </button>
       </div>
       <form
         className="mi-agent-coach-form"
@@ -643,11 +751,12 @@ export function CoachConversationPanel({ applyCoachClarification, askCoach, aski
                     <CoachStageReadiness
                       readiness={message.result?.stageReadiness}
                     />
-                    {hasCoachFoundation(message.result) ? (
-                      <details className="mi-agent-coach-foundation" open>
-                        <summary>Fundamento de la respuesta</summary>
+                    {showCoachFoundation &&
+                    hasCoachFoundation(message.result) ? (
+                      <div className="mi-agent-coach-foundation">
+                        <strong>Fundamento de la respuesta</strong>
                         <CoachSemanticSections result={message.result} />
-                      </details>
+                      </div>
                     ) : null}
                     {message.result?.operations
                       ?.filter(

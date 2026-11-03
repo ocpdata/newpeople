@@ -69,6 +69,23 @@
   display: grid;
   gap: 2px;
 }
+.mi-agent-coach-conversation-heading > .mi-agent-coach-conversation-actions {
+  display: inline-flex;
+  align-self: flex-end;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  white-space: nowrap;
+}
+.mi-agent-coach-conversation-actions > .mi-agent-secondary-button {
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 8px 12px;
+}
+.mi-agent-coach-conversation-actions .mi-agent-coach-foundation-toggle {
+  margin-left: 0;
+}
 .mi-agent-coach-context-heading strong,
 .mi-agent-coach-conversation-heading strong {
   color: #173b52;
@@ -212,6 +229,37 @@
   border-radius: 5px;
   background: #fff;
 }
+.mi-agent-coach-test-questions {
+  margin-top: 10px;
+  color: #405c6c;
+  font-size: 12px;
+}
+.mi-agent-coach-test-questions > summary {
+  width: fit-content;
+  color: #176b87;
+  cursor: pointer;
+  font-weight: 700;
+}
+.mi-agent-coach-test-questions > p {
+  margin: 8px 0;
+  color: #637984;
+  font-size: 11px;
+}
+.mi-agent-coach-test-questions section {
+  margin-top: 12px;
+}
+.mi-agent-coach-test-questions section > strong {
+  color: #173b52;
+  font-size: 11px;
+}
+.mi-agent-coach-test-questions .mi-agent-coach-suggestions {
+  margin-top: 6px;
+}
+.mi-agent-coach-test-questions .mi-agent-coach-suggestions button {
+  max-width: 100%;
+  text-align: left;
+  white-space: normal;
+}
 .mi-agent-customer-public-research {
   display: grid;
   grid-template-columns: 16px auto;
@@ -287,10 +335,19 @@
   color: #4b6372;
 }
 .mi-agent-coach-conversation-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
   order: 9;
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid #dfe7ea;
+}
+.mi-agent-coach-conversation-label {
+  display: grid;
+  gap: 2px;
 }
 .mi-agent-coach-foundation-toggle {
   display: inline-flex;
@@ -822,15 +879,11 @@
 .mi-agent-coach-foundation {
   margin-top: 12px;
 }
-.mi-agent-coach-foundation > summary {
-  cursor: pointer;
+.mi-agent-coach-foundation > strong {
+  display: block;
   color: #1f5f86;
   font-size: 12px;
   font-weight: 700;
-}
-.mi-agent-coach-foundation > summary:focus-visible {
-  outline: 2px solid #1f5f86;
-  outline-offset: 2px;
 }
 .mi-agent-coach-semantic {
   display: grid;
@@ -1075,14 +1128,18 @@
   .mi-agent-coach-panel {
     padding: 14px;
   }
+  .mi-agent-coach-conversation-heading
+    > .mi-agent-coach-conversation-actions {
+    align-self: flex-end;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    white-space: normal;
+  }
   .mi-agent-coach-context-heading {
     display: grid;
   }
   .mi-agent-coach-context-heading .btn-secondary {
     justify-self: start;
-  }
-  .mi-agent-coach-conversation-heading {
-    flex-wrap: wrap;
   }
   .mi-agent-customer-chat-header-actions {
     flex-wrap: wrap;

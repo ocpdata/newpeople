@@ -580,7 +580,7 @@ export default function MiAgentPage({
           ? ` También se descartarán ${pendingOperationCount} acciones pendientes.`
           : "";
     const confirmed = window.confirm(
-      `Se cerrará esta conversación y se eliminarán sus mensajes de la vista.${pendingOperationNotice} ¿Continuar?`,
+      `Se cerrará esta conversación y se limpiarán sus mensajes y borradores para iniciar una nueva.${pendingOperationNotice} ¿Continuar?`,
     );
     if (!confirmed) return;
 
@@ -594,7 +594,7 @@ export default function MiAgentPage({
           coachPendingOperations.map((operation) =>
             api.post(`/api/mi-agent/coach/operations/${operation.id}/status`, {
               status: "cancelled",
-              cancellationReason: "Descartada al limpiar la conversación",
+              cancellationReason: "Descartada al iniciar una nueva conversación",
             }),
           ),
         );
@@ -617,7 +617,7 @@ export default function MiAgentPage({
       setError(
         getApiErrorMessage(
           requestError,
-          "No fue posible limpiar la conversación del Coach",
+          "No fue posible iniciar una nueva conversación del Coach",
         ),
       );
     }
