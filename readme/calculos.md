@@ -17,10 +17,10 @@ La interfaz está en `/commercial-planning` y presenta estas secciones:
 
 ### Permisos
 
-- `planeacion_comercial.read`: consultar planeación y comisiones.
-- `planeacion_comercial.create`: guardar por primera vez metas o configuración anual.
-- `planeacion_comercial.update`: editar años que ya tienen períodos.
-- `planeacion_comercial.audit.read`: consultar auditoría mediante las herramientas de auditoría autorizadas.
+- `planeacion_comercial.read`: consultar metas trimestrales, tasas configuradas y seguimiento de ventas aceptadas y comisiones.
+- `planeacion_comercial.create`: guardar por primera vez las metas y la configuración de comisiones de un año.
+- `planeacion_comercial.update`: actualizar cuotas, márgenes esperados y tasas de comisión de años ya configurados.
+- `planeacion_comercial.audit.read`: consultar la trazabilidad de cambios en la configuración de planeación y comisiones mediante las herramientas de auditoría autorizadas.
 - `comercial.seller.eligible`: determinar qué vendedores pueden configurarse.
 
 No existe un estado ni una acción para cerrar períodos. Los cuatro trimestres permanecen editables.

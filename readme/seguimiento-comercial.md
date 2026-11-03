@@ -1,4 +1,4 @@
-# Seguimiento Comercial (Pipeline)
+# Embudo de ventas
 
 ## Objetivo
 
@@ -12,7 +12,7 @@ Ofrecer visibilidad del pipeline activo, salud de oportunidades y avance por per
 
 ## Permisos y acceso
 
-- `seguimiento_comercial.read`
+- `seguimiento_comercial.read` (en Roles y permisos aparece como «Consultar el embudo de ventas»)
 - Requiere lectura de oportunidades (`oportunidades.read` o `oportunidades.read_all`).
 
 ## Ruta de UI

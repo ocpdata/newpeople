@@ -16,19 +16,22 @@ const COMMERCIAL_CALENDAR_PERMISSIONS = [
     code: "calendario_comercial.read",
     module: "calendario_comercial",
     action: "read",
-    description: "Ver el modulo de calendario comercial",
+    description:
+      "Consultar las actividades y alertas de la agenda propia. No permite ver la agenda de otros vendedores ni crear o modificar actividades.",
   },
   {
     code: "calendario_comercial.read_all",
     module: "calendario_comercial",
     action: "read_all",
-    description: "Ver calendarios comerciales de todos los vendedores",
+    description:
+      "Consultar las actividades y alertas de todos los vendedores y seleccionar a quién mostrar en la agenda. No concede permisos para crear o modificar actividades.",
   },
   {
     code: "calendario_comercial.update",
     module: "calendario_comercial",
     action: "update",
-    description: "Crear y actualizar actividades desde el calendario comercial",
+    description:
+      "Crear actividades, reprogramarlas y actualizar su estado desde la agenda. Las actividades de oportunidades también requieren los permisos correspondientes para modificar esas oportunidades.",
   },
 ];
 
@@ -70,6 +73,12 @@ export async function ensureCommercialCalendarPermissions(options = {}) {
           now,
           permission.code,
         ],
+      );
+      await conn.query(
+        `UPDATE permissions
+         SET description = ?, updated_at = ?
+         WHERE code = ? AND IFNULL(description, '') <> ?`,
+        [permission.description, now, permission.code, permission.description],
       );
     }
 

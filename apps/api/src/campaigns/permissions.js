@@ -5,19 +5,22 @@ const CAMPAIGN_PERMISSIONS = [
     code: "campanas.read",
     module: "campanas",
     action: "read",
-    description: "Ver modulo de campanas",
+    description:
+      "Consultar catálogos, campañas, sugerencias de cuentas y la audiencia asociada. No permite crear ni modificar campañas.",
   },
   {
     code: "campanas.create",
     module: "campanas",
     action: "create",
-    description: "Crear campanas",
+    description:
+      "Crear campañas con su contexto comercial, tipo, subtipo y etapa objetivo, sujeto a las combinaciones permitidas. No concede edición posterior.",
   },
   {
     code: "campanas.update",
     module: "campanas",
     action: "update",
-    description: "Editar campanas y su audiencia por cuenta",
+    description:
+      "Modificar los datos y el estado de las campañas, y administrar su audiencia por cuenta y los contactos asociados.",
   },
 ];
 
@@ -57,6 +60,12 @@ export async function ensureCampaignPermissions(options = {}) {
           now,
           permission.code,
         ],
+      );
+      await conn.query(
+        `UPDATE permissions
+         SET description = ?, updated_at = ?
+         WHERE code = ? AND IFNULL(description, '') <> ?`,
+        [permission.description, now, permission.code, permission.description],
       );
     }
 

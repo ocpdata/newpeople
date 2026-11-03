@@ -1,4 +1,4 @@
-# Aceptar Pedido - Especificacion funcional de Procesamiento Post-Aceptacion
+# Aceptación de pedidos - Especificación funcional de procesamiento posterior
 
 ## 1. Objetivo
 
@@ -16,7 +16,7 @@ Este documento cubre:
 
 ### 2.1 Trigger de entrada
 
-- En el listado de cotizaciones del modulo Aceptar Pedido:
+- En el listado de cotizaciones del módulo Aceptación de pedidos:
   - agregar opcion `Procesar` en el menu kebab;
   - mostrarla solo para cotizaciones cuyo estado sea `aceptada`.
 
@@ -50,7 +50,7 @@ Al hacer clic en `Procesar`, abrir un modal con el flujo completo:
 
 ## 3.2 Regla de acceso
 
-- Solo usuarios con acceso al modulo Aceptar Pedido pueden ver la opcion `Procesar`.
+- Solo usuarios con acceso al módulo Aceptación de pedidos pueden ver la opción `Procesar`.
 - Dentro de ese subconjunto, solo usuarios con permiso `...read` pueden abrir el modal.
 - Solo usuarios con `...update` pueden editar etapas.
 - Solo usuarios con `...ia` pueden ejecutar generacion de resumen IA.

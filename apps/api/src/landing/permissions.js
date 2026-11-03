@@ -5,37 +5,43 @@ const LANDING_PERMISSIONS = [
     code: "landing.read",
     module: "landing",
     action: "read_pages",
-    description: "Ver el modulo de landing pages",
+    description:
+      "Consultar el listado y el detalle de las paginas de captacion y sus versiones",
   },
   {
     code: "landing.create",
     module: "landing",
     action: "create",
-    description: "Crear landings por evento",
+    description:
+      "Crear paginas de captacion asociadas a eventos y preparar sus formularios",
   },
   {
     code: "landing.update",
     module: "landing",
     action: "update",
-    description: "Editar landings por evento",
+    description:
+      "Modificar contenido, versiones, formularios y configuracion de paginas de captacion; importar contenido y eliminar paginas",
   },
   {
     code: "landing.publish",
     module: "landing",
     action: "publish",
-    description: "Publicar landings por evento",
+    description:
+      "Publicar una version validada de una pagina de captacion para que este disponible publicamente",
   },
   {
     code: "landing.submissions.read",
     module: "landing",
     action: "read_submissions",
-    description: "Ver envios de formularios de landing",
+    description:
+      "Consultar los registros recibidos por los formularios y su estado de procesamiento",
   },
   {
     code: "landing.submissions.reprocess",
     module: "landing",
     action: "reprocess_submissions",
-    description: "Reprocesar envios de landing hacia CRM",
+    description:
+      "Asignar vendedor, guardar notas internas, reprocesar envios hacia el CRM o eliminarlos",
   },
 ];
 
@@ -74,6 +80,12 @@ export async function ensureLandingPermissions(options = {}) {
           now,
           permission.code,
         ],
+      );
+      await conn.query(
+        `UPDATE permissions
+         SET description = ?, updated_at = ?
+         WHERE code = ? AND IFNULL(description, '') <> ?`,
+        [permission.description, now, permission.code, permission.description],
       );
     }
 

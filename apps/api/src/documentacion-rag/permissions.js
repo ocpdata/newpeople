@@ -9,12 +9,12 @@ export async function ensureDocumentacionRagPermissions({
       [
         "documentacion_rag.access",
         "access",
-        "Acceder a la biblioteca de Documentacion RAG",
+        "Entrar al modulo para consultar temas, documentos y su estado. No permite importar, cargar, reemplazar, clasificar ni eliminar contenido; el chatbot puede consultar documentos activos sin este permiso.",
       ],
       [
         "documentacion_rag.manage",
         "manage",
-        "Administrar temas y documentos de la biblioteca Documentacion RAG",
+        "Gestionar temas y documentos: importar desde Pinecone Assistant, cargar o reemplazar archivos, actualizar resumen y clasificacion, eliminar documentos y habilitar o deshabilitar temas. Incluye acceso de consulta.",
       ],
     ];
     for (const [code, action, description] of permissionDefinitions) {
@@ -23,6 +23,12 @@ export async function ensureDocumentacionRagPermissions({
          SELECT ?, ?, ?, ?, ?, ?
          WHERE NOT EXISTS (SELECT 1 FROM permissions WHERE code = ?)`,
         [code, "documentacion_rag", action, description, now, now, code],
+      );
+      await conn.query(
+        `UPDATE permissions
+         SET description = ?, updated_at = ?
+         WHERE code = ? AND IFNULL(description, '') <> ?`,
+        [description, now, code, description],
       );
     }
 

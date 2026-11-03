@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Agrupar utilidades administrativas para diagnostico, saneamiento y reconciliacion de datos sensibles.
+Reunir herramientas administrativas para revisar incidencias en datos operativos y aplicar correcciones controladas. Actualmente incluye el diagnóstico y la consolidación auditada de duplicados en listas de precios.
 
 ## Alcance
 
@@ -12,7 +12,9 @@ Agrupar utilidades administrativas para diagnostico, saneamiento y reconciliacio
 
 ## Permisos y acceso
 
-- `herramientas.read`
+- `herramientas.read`: consultar el catálogo, revisar incidencias y consultar grupos duplicados, su detalle y referencias.
+- `herramientas.update`: consolidar grupos duplicados mediante archivo o eliminación segura, con validación y auditoría.
+- `herramientas.admin`: permiso previsto para acciones avanzadas; actualmente no habilita acciones adicionales.
 
 ## Ruta de UI
 

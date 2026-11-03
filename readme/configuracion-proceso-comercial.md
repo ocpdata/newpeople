@@ -1,8 +1,8 @@
-# Configuracion del Proceso Comercial
+# Preguntas por etapa
 
 ## Objetivo
 
-Administrar preguntas por etapa comercial para estandarizar captura de contexto y calidad de ejecucion.
+Configurar las preguntas que se presentan al registrar información de una oportunidad en cada etapa de venta. Esto estandariza la captura de contexto y la calidad de ejecución; no modifica las etapas comerciales.
 
 ## Alcance
 
@@ -12,8 +12,8 @@ Administrar preguntas por etapa comercial para estandarizar captura de contexto 
 
 ## Permisos y acceso
 
-- Lectura: `proceso_comercial_config.read`
-- Edicion: `proceso_comercial_config.update`
+- Consulta: `proceso_comercial_config.read`
+- Administración de preguntas: `proceso_comercial_config.update`
 
 ## Ruta de UI
 
@@ -36,5 +36,5 @@ Administrar preguntas por etapa comercial para estandarizar captura de contexto 
 
 ## Estado actual (2026-07-29)
 
-- Modulo activo con modal de alta/edicion y reorder.
+- Módulo activo con alta y edición de preguntas, cambios de orden y activación o desactivación.
 - Integrado con catalogos y permisos de proceso comercial.

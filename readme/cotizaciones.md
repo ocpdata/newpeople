@@ -54,7 +54,16 @@ El modulo usa permisos nuevos dentro de `permissions`:
 - `cotizaciones.aprobacion_humana`
 - `cotizaciones.aprobacion_ia`
 
-Las descripciones de estos permisos explican su publico y alcance: operacion para vendedores, ingreso para logistica, revision para responsables de aprobar y externo para clientes que consultan sus cotizaciones. Revision permite corregir y rechazar; aprobar requiere el permiso especifico de aprobacion humana o con IA. Ingreso tambien permite editar borradores, solicitar aprobacion y marcar aprobadas como ganadas. Estos textos no cambian las autorizaciones existentes. Los permisos se acumulan y no sustituyen las restricciones de acceso a cada cotizacion.
+Las descripciones de estos permisos separan las tareas del ciclo:
+
+- `cotizaciones.operacion`: crear y preparar cotizaciones, solicitar aprobación, enviar y registrar el resultado comercial.
+- `cotizaciones.ingreso`: trabajar con borradores y registrar como ganadas cotizaciones aprobadas o devolver ganadas a borrador, según las transiciones habilitadas.
+- `cotizaciones.revision`: revisar, corregir y rechazar en el flujo de aprobación; no autoriza por sí solo a aprobar.
+- `cotizaciones.aprobacion_humana` y `cotizaciones.aprobacion_ia`: autorizar la aprobación manual o asistida por IA, respectivamente, en estados habilitados y sujeto a validaciones.
+- `cotizaciones.administracion`: acceso amplio a las acciones e historial de versiones, incluso en estados avanzados.
+- `cotizaciones.externo`: consulta de solo lectura de cotizaciones disponibles para el cliente en estados aprobada, enviada, ganada o aceptada.
+
+Estos textos no cambian las autorizaciones existentes. Los permisos se acumulan y no sustituyen las restricciones de acceso a cada cotización.
 
 En Roles y permisos, cada permiso se presenta con un titulo legible y su descripcion debajo, junto a la casilla de seleccion. Los titulos visibles de cotizaciones no cambian sus codigos internos.
 

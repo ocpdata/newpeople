@@ -47,12 +47,12 @@ No cubre en detalle la logica interna de Leads, Cuentas, Contactos y Oportunidad
 
 Permisos del modulo:
 
-- `landing.read`: ver modulo de landing, listados y detalle de landing pages.
-- `landing.create`: crear landing por evento.
-- `landing.update`: editar landing/versiones, importar URL, subir HTML y configurar confirmacion.
-- `landing.publish`: publicar landing.
-- `landing.submissions.read`: ver submissions por evento.
-- `landing.submissions.reprocess`: guardar notas de submission y reprocesar/enviar submissions a CRM.
+- `landing.read`: consultar el listado y el detalle de las páginas de captación y sus versiones.
+- `landing.create`: crear páginas de captación asociadas a eventos y preparar sus formularios.
+- `landing.update`: modificar contenido, versiones, formularios y configuración de páginas; importar contenido y eliminar páginas.
+- `landing.publish`: publicar una versión validada para que la página quede disponible públicamente.
+- `landing.submissions.read`: consultar los registros recibidos por los formularios y su estado de procesamiento.
+- `landing.submissions.reprocess`: asignar vendedor, guardar notas internas, reprocesar envíos hacia el CRM o eliminarlos.
 
 Asignacion automatica actual:
 

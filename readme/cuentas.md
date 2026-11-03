@@ -36,9 +36,12 @@ Gestion de cuentas comerciales:
 
 Las descripciones en Roles y permisos explican estas dependencias sin cambiar autorizaciones:
 
-- `cuentas.read` permite consultar cuentas propias, sin crearlas ni editarlas.
-- `cuentas.read_all` amplía el alcance a todas las cuentas; consultar requiere `cuentas.read` y editar requiere `cuentas.update`.
-- `cuentas.assign_owners_any` permite elegir propietarios al crear o editar, junto con el permiso de creación correspondiente o `cuentas.update`. Sin este permiso, se asigna la cuenta nueva al creador y al editar se conservan sus propietarios. No concede acceso a cuentas ajenas.
+- `cuentas.read` permite consultar el listado y los datos de las cuentas propias, sin crearlas ni editarlas.
+- `cuentas.read_all` amplía a todas las cuentas el alcance de `cuentas.read`; junto con `cuentas.update`, también permite editar cuentas ajenas.
+- `cuentas.request` registra altas como Pendientes de activación si el flujo está habilitado; no permite activarlas. Si también se tiene `cuentas.create`, las nuevas cuentas se crean activadas.
+- `cuentas.create` permite crear cuentas activadas y, junto con `cuentas.update`, cambiar su estado de activación.
+- `cuentas.update` permite editar los datos de las cuentas accesibles. No permite crearlas; los cambios de estado requieren `cuentas.create`.
+- `cuentas.assign_owners_any` permite elegir propietarios al crear (con `cuentas.create` o `cuentas.request`) o editar cuentas (con `cuentas.update`). Sin este permiso, la cuenta nueva se asigna a quien la crea y al editar se conservan sus propietarios. No concede acceso a cuentas ajenas.
 
 ### Restricciones de estado
 

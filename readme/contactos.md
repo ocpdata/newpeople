@@ -262,13 +262,13 @@ Ese modal permite:
 
 Las descripciones en Roles y permisos explican el alcance de cada permiso:
 
-- `contactos.read`: consultar contactos de las cuentas propias, sin crearlos ni modificarlos.
-- `contactos.read_all`: ampliar el alcance a todas las cuentas; la consulta requiere además `contactos.read`. Combinado con creación o edición, también amplía el alcance de esas operaciones.
-- `contactos.request`: solicitar aprobación manual del alta, registrando el contacto como pendiente para revisión por un usuario autorizado. Conserva la alternativa manual cuando no se use IA, pero requiere habilitar `contactsPendingEnabled`; desactivar IA no habilita ese flujo automáticamente.
-- `contactos.create`: crear contactos activos, sujetos a validaciones de datos y duplicados; junto con `contactos.update`, permite cambiar su estado de activación.
-- `contactos.update`: editar contactos accesibles; no concede creación ni cambio de activación por sí solo.
+- `contactos.read`: consultar contactos asociados a cuentas propias, sin crearlos ni editarlos.
+- `contactos.read_all`: ampliar a todas las cuentas el alcance de `contactos.read`; junto con creación o edición también amplía el alcance de esas operaciones.
+- `contactos.request`: registrar contactos nuevos como pendientes para revisión cuando `contactsPendingEnabled` está habilitado. No permite activarlos; desactivar IA no habilita este flujo automáticamente.
+- `contactos.create`: crear contactos activos asociados a una cuenta accesible, sujetos a validación de datos y revisión de posibles duplicados.
+- `contactos.update`: editar datos y relaciones de contactos accesibles. Para cambiar el estado se requiere también `contactos.create`.
 
-Los permisos se acumulan. Si el usuario tiene `contactos.create` y `contactos.request`, prevalece la creación directa como activo. Estas descripciones no cambian permisos ni configuración.
+Los permisos se acumulan. Si el usuario tiene `contactos.create` y `contactos.request`, prevalece la creación directa como activo. `contactos.read_all` amplía el alcance, pero no concede por sí solo creación ni edición. Estas descripciones no cambian permisos ni configuración.
 
 ### Cambios de estado
 

@@ -1,8 +1,8 @@
-# Biblioteca de ventas
+# Biblioteca comercial
 
 ## Objetivo
 
-Buscador de materiales (archivos y enlaces) listos para enviar. El vendedor escribe lo que necesita, previsualiza el material y lo descarga o comparte en pocos clics; tambien alimenta propuestas, cotizaciones y correos comerciales.
+Centralizar materiales comerciales vigentes —archivos y enlaces— para encontrarlos, previsualizarlos y usarlos en oportunidades, leads, propuestas y correos. La biblioteca también administra la carga, edición, publicación y clasificación de esos materiales.
 
 ## Pantallas
 
@@ -13,10 +13,11 @@ Buscador de materiales (archivos y enlaces) listos para enviar. El vendedor escr
 
 ## Permisos y acceso
 
-- Buscar y usar: `enablement_comercial.use` (tambien `read`, `analytics`, `update`).
-- Subir y editar lo propio, activar y desactivar lo propio: `enablement_comercial.upload`.
-- Gestionar cualquier material y eliminar: `enablement_comercial.manage`.
-- Administrar catalogos: `enablement_comercial.admin`.
+- Buscar, consultar y usar materiales activos: `enablement_comercial.use`.
+- Cargar y editar materiales propios, incluidos archivos o enlaces; activar y desactivar los propios: `enablement_comercial.upload`.
+- Editar, activar, desactivar y eliminar materiales de cualquier usuario: `enablement_comercial.manage`.
+- Crear, editar y eliminar entradas de los catálogos; también permite gestionar cualquier material, incluidos los restringidos: `enablement_comercial.admin`.
+- Permisos heredados: `enablement_comercial.read` conserva consulta; `enablement_comercial.update` conserva carga y edición de materiales propios; `enablement_comercial.analytics` conserva consulta, pero no habilita reportes de analítica.
 
 ## Ruta de UI
 

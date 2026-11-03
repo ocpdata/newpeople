@@ -17,14 +17,15 @@ const CORE_PERMISSIONS = [
     code: "documentacion_rag.access",
     module: "documentacion_rag",
     action: "access",
-    description: "Acceder a la biblioteca de Documentacion RAG",
+    description:
+      "Entrar al modulo para consultar temas, documentos y su estado. No permite importar, cargar, reemplazar, clasificar ni eliminar contenido; el chatbot puede consultar documentos activos sin este permiso.",
   },
   {
     code: "documentacion_rag.manage",
     module: "documentacion_rag",
     action: "manage",
     description:
-      "Administrar temas y documentos de la biblioteca Documentacion RAG",
+      "Gestionar temas y documentos: importar desde Pinecone Assistant, cargar o reemplazar archivos, actualizar resumen y clasificacion, eliminar documentos y habilitar o deshabilitar temas. Incluye acceso de consulta.",
   },
   {
     code: "cuentas.request",
@@ -133,20 +134,22 @@ const CORE_PERMISSIONS = [
     code: "herramientas.read",
     module: "herramientas",
     action: "read",
-    description: "Ver modulo de herramientas administrativas",
+    description:
+      "Consultar el catalogo, revisar incidencias y ver grupos duplicados en listas de precios, su detalle y referencias antes de decidir una accion.",
   },
   {
     code: "herramientas.update",
     module: "herramientas",
     action: "update",
     description:
-      "Ejecutar acciones correctivas en herramientas administrativas",
+      "Consolidar grupos de productos duplicados en listas de precios, archivando duplicados o eliminandolos cuando la validacion lo permite. Las acciones quedan auditadas.",
   },
   {
     code: "herramientas.admin",
     module: "herramientas",
     action: "admin",
-    description: "Administrar herramientas operativas de alto impacto",
+    description:
+      "Permiso previsto para acciones administrativas avanzadas. Actualmente las herramientas disponibles se controlan con herramientas.read y herramientas.update; este permiso no habilita acciones adicionales.",
   },
   {
     code: "pruebas.read",
@@ -184,25 +187,29 @@ const CORE_PERMISSIONS = [
     code: "aceptar_pedido.procesamiento.read",
     module: "aceptar_pedido",
     action: "procesamiento_read",
-    description: "Ver el modulo Aceptar Pedido y su flujo operativo",
+    description:
+      "Consultar las etapas, el estado y los documentos del procesamiento posterior a la aceptación de una cotización. No permite editar información, generar contenido con IA ni enviar convocatorias.",
   },
   {
     code: "aceptar_pedido.procesamiento.update",
     module: "aceptar_pedido",
     action: "procesamiento_update",
-    description: "Actualizar etapas y documentos del modulo Aceptar Pedido",
+    description:
+      "Editar la información operativa de las etapas y gestionar sus documentos y evidencias para dar seguimiento al pedido aceptado.",
   },
   {
     code: "aceptar_pedido.procesamiento.ia",
     module: "aceptar_pedido",
     action: "procesamiento_ia",
-    description: "Generar contenido IA dentro del modulo Aceptar Pedido",
+    description:
+      "Generar o volver a generar resúmenes con IA a partir de las evidencias del procesamiento, cuando haya contenido compatible disponible.",
   },
   {
     code: "aceptar_pedido.procesamiento.convocar",
     module: "aceptar_pedido",
     action: "procesamiento_convocar",
-    description: "Enviar convocatorias y notificaciones desde Aceptar Pedido",
+    description:
+      "Enviar convocatorias y notificaciones de kick off asociadas al procesamiento del pedido. No concede permisos para editar las etapas ni generar resúmenes con IA.",
   },
   {
     code: "propuestas.read",
@@ -226,174 +233,212 @@ const CORE_PERMISSIONS = [
     code: "ia.budget.read_self",
     module: "ia",
     action: "budget_read_self",
-    description: "Ver su propio credito y consumo de IA",
+    description:
+      "Consultar el credito disponible y el consumo de IA asociados al propio usuario",
   },
   {
     code: "ia.budget.read_all",
     module: "ia",
     action: "budget_read_all",
-    description: "Ver credito y consumo de IA de todos los usuarios",
+    description:
+      "Consultar saldos, consumo y detalle de uso de IA de cualquier usuario",
   },
   {
     code: "ia.budget.manage",
     module: "ia",
     action: "budget_manage",
-    description: "Gestionar creditos y politicas de consumo de IA",
+    description:
+      "Configurar limites, politicas de consumo, asignaciones por usuario y tarifas de servicios de IA",
   },
   {
     code: "ia.usage.read_all",
     module: "ia",
     action: "usage_read_all",
-    description: "Ver reportes agregados de uso de IA",
+    description:
+      "Consultar reportes agregados de consumo de IA por usuario, proveedor u otros criterios disponibles",
   },
 ];
 
 const PERMISSION_DESCRIPTION_OVERRIDES = [
   {
+    code: "audit.read",
+    description:
+      "Consultar eventos de seguridad, administración y operaciones registrados en la bitácora global, aplicar filtros y revisar sus detalles y cambios. Es un permiso de solo lectura; no permite modificar ni eliminar registros.",
+  },
+  {
+    code: "documentacion_rag.access",
+    description:
+      "Entrar al modulo para consultar temas, documentos y su estado. No permite importar, cargar, reemplazar, clasificar ni eliminar contenido; el chatbot puede consultar documentos activos sin este permiso.",
+  },
+  {
+    code: "documentacion_rag.manage",
+    description:
+      "Gestionar temas y documentos: importar desde Pinecone Assistant, cargar o reemplazar archivos, actualizar resumen y clasificacion, eliminar documentos y habilitar o deshabilitar temas. Incluye acceso de consulta.",
+  },
+  {
+    code: "herramientas.read",
+    description:
+      "Consultar el catalogo, revisar incidencias y ver grupos duplicados en listas de precios, su detalle y referencias antes de decidir una accion.",
+  },
+  {
+    code: "herramientas.update",
+    description:
+      "Consolidar grupos de productos duplicados en listas de precios, archivando duplicados o eliminandolos cuando la validacion lo permite. Las acciones quedan auditadas.",
+  },
+  {
+    code: "herramientas.admin",
+    description:
+      "Permiso previsto para acciones administrativas avanzadas. Actualmente las herramientas disponibles se controlan con herramientas.read y herramientas.update; este permiso no habilita acciones adicionales.",
+  },
+  {
     code: "oportunidades.read",
     description:
-      "Consultar el listado y los datos de oportunidades de cuentas de las que sea propietario. No concede creación ni edición. Para consultar oportunidades de todas las cuentas necesita además oportunidades.read_all.",
+      "Consultar el listado, los datos y las notas de las oportunidades de cuentas de las que sea propietario. No concede creación ni edición. Para consultar oportunidades de todas las cuentas necesita además oportunidades.read_all.",
   },
   {
     code: "oportunidades.read_all",
     description:
-      "Acceder a oportunidades de todas las cuentas y a cuentas y contactos ajenos en catálogos relacionados. Consultar requiere oportunidades.read. Amplía el alcance de las operaciones autorizadas; no concede creación ni edición por sí solo.",
+      "Ampliar a todas las cuentas el alcance de consulta de oportunidades y de los registros relacionados. Requiere oportunidades.read; no concede creación ni edición por sí solo.",
   },
   {
     code: "oportunidades.request",
     description:
-      "Solicitar el alta de oportunidades como Pendientes de activación. Requiere habilitar el flujo de pendientes, salvo si tiene oportunidades.read_all. No permite activarlas; con oportunidades.create se crean activadas.",
+      "Registrar solicitudes de alta de oportunidades como Pendientes de activación para revisión. No las activa; su disponibilidad depende de la configuración del flujo de pendientes.",
   },
   {
     code: "oportunidades.create",
     description:
-      "Crear oportunidades directamente Activadas, sujetas a las validaciones del sistema. Junto con oportunidades.update, habilita cambios de activación según las reglas del flujo. No permite editar oportunidades ganadas por sí solo.",
+      "Crear oportunidades activadas, sujeto a las validaciones del sistema. Junto con oportunidades.update permite los cambios de activación previstos; no concede por sí solo la edición de oportunidades ganadas.",
   },
   {
     code: "oportunidades.update",
     description:
-      "Editar oportunidades accesibles y operar su flujo comercial, sujeto a validaciones y reglas de cierre. Cambiar la activación requiere oportunidades.create; editar Ganadas requiere oportunidades.update_won. No permite cambiar etapas de cerradas.",
+      "Editar oportunidades accesibles, agregar notas y operar su flujo comercial según sus validaciones. Cambiar la activación requiere oportunidades.create; editar Ganadas requiere oportunidades.update_won. No permite cambiar etapas de oportunidades cerradas.",
   },
   {
     code: "oportunidades.update_won",
     description:
-      "Editar campos de oportunidades Ganadas junto con oportunidades.update. No reabre la oportunidad ni permite cambiar su etapa o estado comercial. Solo aplica a oportunidades a las que tenga acceso.",
+      "Editar campos de oportunidades Ganadas junto con oportunidades.update. No las reabre ni permite cambiar su etapa o estado comercial; solo aplica a oportunidades accesibles.",
   },
   {
     code: "oportunidades.bypass_stage_validation",
     description:
-      "Avanzar manualmente a la siguiente etapa sin la validación normal, indicando un motivo que queda en auditoría. Solo en oportunidades accesibles y no cerradas. No concede edición general ni acceso global.",
+      "Avanzar manualmente a la siguiente etapa sin completar la validación habitual, dejando un motivo en auditoría. Solo aplica a oportunidades accesibles y no cerradas; no concede edición general.",
   },
   {
     code: "oportunidades.bypass_demostracion_validation",
     description:
-      "Avanzar manualmente sin la validación normal solo desde Demostración, indicando un motivo que queda en auditoría. Solo en oportunidades accesibles y no cerradas. No habilita excepciones en otras etapas ni concede edición general.",
+      "Avanzar manualmente desde Demostración sin completar su validación habitual, dejando un motivo en auditoría. No habilita excepciones en otras etapas ni concede edición general.",
   },
   {
     code: "cuentas.read",
     description:
-      "Consultar el listado y los datos de las cuentas de las que el usuario es propietario. No permite crearlas ni editarlas. Para consultar todas las cuentas necesita además cuentas.read_all.",
+      "Consultar el listado y los datos de las cuentas de las que eres propietario. Para ampliar el alcance a todas las cuentas se requiere además cuentas.read_all. No permite crear ni editar cuentas.",
   },
   {
     code: "cuentas.read_all",
     description:
-      "Acceder a todas las cuentas, aunque no sea propietario. La consulta requiere cuentas.read; combinado con cuentas.update, amplía la edición a todas las cuentas. No concede creación, edición ni asignación de propietarios por sí solo.",
+      "Ampliar a todas las cuentas el alcance de cuentas.read. Para consultar se requiere también cuentas.read; junto con cuentas.update permite editar cuentas ajenas. No concede creación ni asignación de propietarios.",
   },
   {
     code: "cuentas.request",
     description:
-      "Solicitar aprobación del alta de cuentas. Las registra como Pendientes de activación para revisión por un usuario autorizado. Requiere habilitar el flujo de cuentas pendientes; no permite activarlas. Con cuentas.create, se crean activadas.",
+      "Registrar nuevas cuentas como Pendientes de activación para revisión, si el flujo de pendientes está habilitado. No permite activarlas; si también tienes cuentas.create, se crean activadas.",
   },
   {
     code: "cuentas.create",
     description:
-      "Crear cuentas directamente activadas, sin aprobación manual y sujetas a las validaciones del sistema. Junto con cuentas.update, permite activar, desactivar o marcar cuentas como pendientes cuando el flujo esté habilitado.",
+      "Crear cuentas directamente activadas, sujetas a la validación de datos y duplicados. Junto con cuentas.update permite cambiar el estado de activación; elegir otros propietarios requiere además cuentas.assign_owners_any.",
   },
   {
     code: "cuentas.update",
     description:
-      "Editar los datos de cuentas a las que tenga acceso. No permite crearlas. Cambiar su activación requiere además cuentas.create; cambiar sus propietarios requiere cuentas.assign_owners_any.",
+      "Editar los datos de cuentas a las que tienes acceso. No permite crearlas; cambiar su estado requiere también cuentas.create y elegir propietarios requiere cuentas.assign_owners_any. cuentas.read_all amplía el alcance de edición a todas.",
   },
   {
     code: "cuentas.assign_owners_any",
     description:
-      "Elegir propietarios al crear o editar cuentas. Requiere permiso de creación o cuentas.update, respectivamente. Sin este permiso, la cuenta nueva se asigna al creador y la edición conserva los propietarios. No concede acceso a cuentas ajenas.",
+      "Elegir propietarios al crear una cuenta (con cuentas.create o cuentas.request) o editarla (con cuentas.update). Sin este permiso, la cuenta nueva se asigna a quien la crea y la edición conserva sus propietarios. No amplía el acceso a otras cuentas.",
   },
   {
     code: "contactos.request",
     description:
-      "Solicitar aprobación manual de nuevos contactos cuando no se use IA. Registra sus datos como Pendientes de activación para revisión y aprobación por un usuario autorizado. Requiere habilitar el flujo de pendientes; no permite activarlos por sí solo.",
+      "Registrar contactos nuevos como Pendientes de activación para revisión, si el flujo de pendientes está habilitado. No permite activarlos; si también tienes contactos.create, se crean activados.",
   },
   {
     code: "contactos.read",
     description:
-      "Consultar contactos de sus cuentas. Permite ver el listado y los datos de contactos asociados a cuentas de las que el usuario es propietario. No permite crearlos ni modificarlos.",
+      "Ver los contactos asociados a cuentas de las que eres propietario. Para ampliar la consulta a contactos de otras cuentas se requiere además contactos.read_all. No permite crear ni editar contactos.",
   },
   {
     code: "contactos.read_all",
     description:
-      "Acceder a contactos de todas las cuentas. Amplía el alcance más allá de las cuentas propias. Para consultarlos necesita también contactos.read; combinado con permisos de creación o edición, amplía también el alcance de esas operaciones.",
+      "Ampliar a todas las cuentas el alcance de contactos.read. Requiere también contactos.read; junto con permisos de creación o edición, permite operar contactos de otras cuentas. No concede creación ni edición por sí solo.",
   },
   {
     code: "contactos.create",
     description:
-      "Crear contactos activos sin aprobación manual, sujetos a validaciones de datos y duplicados. Junto con contactos.update, permite activar, desactivar o marcar contactos como pendientes, según las reglas del sistema.",
+      "Crear contactos activos asociados a una cuenta accesible, sujetos a validaciones y revisión de posibles duplicados. Junto con contactos.update permite cambiar el estado; elegir otra cuenta requiere acceso a ella.",
   },
   {
     code: "contactos.update",
     description:
-      "Editar los datos de contactos a los que tenga acceso. No permite crear contactos ni cambiar su estado de activación por sí solo; para cambiar ese estado necesita además contactos.create.",
+      "Actualizar los datos y la información relacional de contactos dentro de tu alcance. No permite crearlos; cambiar su estado de activación requiere también contactos.create. contactos.read_all amplía el alcance a contactos de todas las cuentas.",
   },
   {
     code: "cotizaciones.operacion",
     description:
-      "Para vendedores. Permite crear y preparar cotizaciones, solicitar aprobacion, enviarlas y registrar su resultado comercial segun el estado. La aprobacion requiere un permiso adicional.",
+      "Crear y preparar cotizaciones, solicitar su aprobacion, enviarlas y registrar su resultado comercial segun el estado. Aprobarlas requiere ademas autorizacion para aprobar sin IA o con IA.",
   },
   {
     code: "cotizaciones.ingreso",
     description:
-      "Para logistica. Permite aceptar cotizaciones ganadas o devolverlas a borrador. Tambien permite editar borradores, solicitar aprobacion y marcar cotizaciones aprobadas como ganadas.",
+      "Gestionar el ingreso de cotizaciones: editar borradores, solicitar aprobacion, registrar como ganada una cotizacion aprobada o devolver una ganada a borrador, segun las reglas del flujo.",
   },
   {
     code: "cotizaciones.revision",
     description:
-      "Para responsables de aprobar cotizaciones. Permite revisar, corregir y rechazar cotizaciones en aprobacion. Para aprobarlas se necesita ademas el permiso de aprobacion humana o con IA.",
+      "Revisar, corregir y rechazar cotizaciones en el flujo de aprobacion. Este permiso no aprueba por si solo: se requiere ademas autorizacion para aprobar sin IA o con IA.",
   },
   {
     code: "cotizaciones.aprobacion_humana",
     description:
-      "Aprobar cotizaciones sin usar IA en los estados habilitados para aprobacion. La aprobacion sigue sujeta a las validaciones del sistema.",
+      "Aprobar manualmente cotizaciones en estados habilitados. La accion sigue sujeta a las reglas de transicion y validaciones comerciales.",
   },
   {
     code: "cotizaciones.aprobacion_ia",
     description:
-      "Ejecutar la aprobacion de cotizaciones con IA en los estados habilitados. La aprobacion depende de las validaciones y del resultado del proceso.",
+      "Ejecutar la aprobacion asistida por IA en los estados habilitados. La accion depende de las reglas de transicion, las validaciones y el resultado del analisis.",
   },
   {
     code: "cotizaciones.administracion",
     description:
-      "Administrar cotizaciones, acceder a versiones historicas y editar o crear versiones incluso en estados aprobada, enviada, ganada y aceptada. Habilita todas las acciones del modulo, sujetas a las validaciones de cada operacion.",
+      "Acceder a todas las acciones y al historial de versiones; crear o editar versiones incluso en estados avanzados. Es un permiso amplio, sujeto a las validaciones del flujo.",
   },
   {
     code: "aceptar_pedido.procesamiento.read",
-    description: "Ver el modulo Aceptar Pedido y su flujo operativo",
+    description:
+      "Consultar las etapas, el estado y los documentos del procesamiento posterior a la aceptación de una cotización. No permite editar información, generar contenido con IA ni enviar convocatorias.",
   },
   {
     code: "aceptar_pedido.procesamiento.update",
-    description: "Actualizar etapas y documentos del modulo Aceptar Pedido",
+    description:
+      "Editar la información operativa de las etapas y gestionar sus documentos y evidencias para dar seguimiento al pedido aceptado.",
   },
   {
     code: "aceptar_pedido.procesamiento.ia",
-    description: "Generar contenido IA dentro del modulo Aceptar Pedido",
+    description:
+      "Generar o volver a generar resúmenes con IA a partir de las evidencias del procesamiento, cuando haya contenido compatible disponible.",
   },
   {
     code: "aceptar_pedido.procesamiento.convocar",
-    description: "Enviar convocatorias y notificaciones desde Aceptar Pedido",
+    description:
+      "Enviar convocatorias y notificaciones de kick off asociadas al procesamiento del pedido. No concede permisos para editar las etapas ni generar resúmenes con IA.",
   },
   {
     code: "cotizaciones.externo",
     description:
-      "Para clientes que desean consultar sus cotizaciones. Permite ver las cotizaciones a las que tengan acceso en estado aprobada, enviada, ganada o aceptada, sin modificarlas ni cambiar su estado.",
+      "Consultar, sin modificarlas, las cotizaciones disponibles para el cliente en estados aprobada, enviada, ganada o aceptada.",
   },
   {
     code: "propuestas.read",
@@ -409,19 +454,23 @@ const PERMISSION_DESCRIPTION_OVERRIDES = [
   },
   {
     code: "ia.budget.read_self",
-    description: "Ver su propio credito y consumo de IA",
+    description:
+      "Consultar el credito disponible y el consumo de IA asociados al propio usuario",
   },
   {
     code: "ia.budget.read_all",
-    description: "Ver credito y consumo de IA de todos los usuarios",
+    description:
+      "Consultar saldos, consumo y detalle de uso de IA de cualquier usuario",
   },
   {
     code: "ia.budget.manage",
-    description: "Gestionar creditos y politicas de consumo de IA",
+    description:
+      "Configurar limites, politicas de consumo, asignaciones por usuario y tarifas de servicios de IA",
   },
   {
     code: "ia.usage.read_all",
-    description: "Ver reportes agregados de uso de IA",
+    description:
+      "Consultar reportes agregados de consumo de IA por usuario, proveedor u otros criterios disponibles",
   },
 ];
 

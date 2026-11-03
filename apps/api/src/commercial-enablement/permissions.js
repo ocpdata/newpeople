@@ -16,44 +16,50 @@ const COMMERCIAL_ENABLEMENT_PERMISSIONS = [
     code: "enablement_comercial.use",
     module: "enablement_comercial",
     action: "use",
-    description: "Buscar, abrir y usar activos de la biblioteca comercial",
+    description:
+      "Consultar materiales activos, revisar su detalle y usarlos, por ejemplo, descargarlos, marcarlos como favoritos o generar enlaces compartibles cuando el material lo permite. No concede carga ni edicion.",
   },
   {
     code: "enablement_comercial.upload",
     module: "enablement_comercial",
     action: "upload",
-    description: "Cargar y editar activos de la biblioteca comercial",
+    description:
+      "Crear materiales y editar los propios, incluidos sus archivos o enlaces; permite activarlos y desactivarlos. No permite modificar o eliminar materiales ajenos ni administrar catalogos.",
   },
   {
     code: "enablement_comercial.manage",
     module: "enablement_comercial",
     action: "manage",
     description:
-      "Publicar, obsoletar y gobernar activos de la biblioteca comercial",
+      "Editar, activar o desactivar materiales de cualquier usuario y eliminar materiales. No concede administracion de los catalogos de la biblioteca.",
   },
   {
     code: "enablement_comercial.admin",
     module: "enablement_comercial",
     action: "admin",
-    description: "Administrar catalogos y gobierno de la biblioteca comercial",
+    description:
+      "Crear, editar y eliminar valores de catalogos como tipos, fabricantes, tecnologias y soluciones. Tambien permite gestionar materiales de cualquier usuario, incluidos los restringidos.",
   },
   {
     code: "enablement_comercial.read",
     module: "enablement_comercial",
     action: "read",
-    description: "Ver recursos y recomendaciones de la biblioteca comercial",
+    description:
+      "Permiso heredado que conserva acceso de consulta a materiales activos. No permite cargarlos, editarlos ni administrar catalogos.",
   },
   {
     code: "enablement_comercial.update",
     module: "enablement_comercial",
     action: "update",
-    description: "Crear y mantener recursos de la biblioteca comercial",
+    description:
+      "Permiso heredado que conserva las capacidades de carga y edicion de materiales propios, incluida su activacion o desactivacion; no permite administrar materiales ajenos ni catalogos.",
   },
   {
     code: "enablement_comercial.analytics",
     module: "enablement_comercial",
     action: "analytics",
-    description: "Consultar analitica de la biblioteca comercial",
+    description:
+      "Codigo heredado que actualmente conserva acceso de consulta a materiales activos. No habilita reportes o analitica de uso ni permite modificar materiales.",
   },
 ];
 
@@ -104,6 +110,12 @@ export async function ensureCommercialEnablementPermissions(options = {}) {
           now,
           permission.code,
         ],
+      );
+      await conn.query(
+        `UPDATE permissions
+         SET description = ?, updated_at = ?
+         WHERE code = ? AND IFNULL(description, '') <> ?`,
+        [permission.description, now, permission.code, permission.description],
       );
     }
 

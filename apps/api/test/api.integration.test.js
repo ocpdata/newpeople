@@ -30,8 +30,11 @@ import { ensureCommercialIntelligenceSchema } from "../src/commercial-intelligen
 import { ensureCommercialTrackingPermissions } from "../src/commercial-tracking/permissions.js";
 import { ensureCommercialPlanningPermissions } from "../src/commercial-planning/permissions.js";
 import { ensureCommercialPlanningSchema } from "../src/commercial-planning/schema.js";
+import { ensureCampaignPermissions } from "../src/campaigns/permissions.js";
+import { ensureCommercialCalendarPermissions } from "../src/commercial-calendar/permissions.js";
 import { ensureCoachSchema } from "../src/coach/schema.js";
 import { ensureLandingPermissions } from "../src/landing/permissions.js";
+import { ensureDocumentacionRagPermissions } from "../src/documentacion-rag/permissions.js";
 import { ensureCommercialExecutionSchema } from "../src/commercial-execution/schema.js";
 import { ensureManufacturerRegistrationPermissions } from "../src/manufacturer-registrations/permissions.js";
 import { ensureManufacturerRegistrationsSchema } from "../src/manufacturer-registrations/schema.js";
@@ -8806,11 +8809,223 @@ describe("API integration baseline", () => {
     }
   });
 
-  test("ensureLandingPermissions vuelve a asignar landing.read a roles comerciales existentes", async () => {
+  test("ensureCorePermissions actualiza descripciones de permisos existentes", async () => {
+    const expectedDescriptions = new Map([
+      [
+        "audit.read",
+        "Consultar eventos de seguridad, administración y operaciones registrados en la bitácora global, aplicar filtros y revisar sus detalles y cambios. Es un permiso de solo lectura; no permite modificar ni eliminar registros.",
+      ],
+      [
+        "herramientas.read",
+        "Consultar el catalogo, revisar incidencias y ver grupos duplicados en listas de precios, su detalle y referencias antes de decidir una accion.",
+      ],
+      [
+        "herramientas.update",
+        "Consolidar grupos de productos duplicados en listas de precios, archivando duplicados o eliminandolos cuando la validacion lo permite. Las acciones quedan auditadas.",
+      ],
+      [
+        "herramientas.admin",
+        "Permiso previsto para acciones administrativas avanzadas. Actualmente las herramientas disponibles se controlan con herramientas.read y herramientas.update; este permiso no habilita acciones adicionales.",
+      ],
+      [
+        "cuentas.read",
+        "Consultar el listado y los datos de las cuentas de las que eres propietario. Para ampliar el alcance a todas las cuentas se requiere además cuentas.read_all. No permite crear ni editar cuentas.",
+      ],
+      [
+        "cuentas.read_all",
+        "Ampliar a todas las cuentas el alcance de cuentas.read. Para consultar se requiere también cuentas.read; junto con cuentas.update permite editar cuentas ajenas. No concede creación ni asignación de propietarios.",
+      ],
+      [
+        "cuentas.request",
+        "Registrar nuevas cuentas como Pendientes de activación para revisión, si el flujo de pendientes está habilitado. No permite activarlas; si también tienes cuentas.create, se crean activadas.",
+      ],
+      [
+        "cuentas.create",
+        "Crear cuentas directamente activadas, sujetas a la validación de datos y duplicados. Junto con cuentas.update permite cambiar el estado de activación; elegir otros propietarios requiere además cuentas.assign_owners_any.",
+      ],
+      [
+        "cuentas.update",
+        "Editar los datos de cuentas a las que tienes acceso. No permite crearlas; cambiar su estado requiere también cuentas.create y elegir propietarios requiere cuentas.assign_owners_any. cuentas.read_all amplía el alcance de edición a todas.",
+      ],
+      [
+        "cuentas.assign_owners_any",
+        "Elegir propietarios al crear una cuenta (con cuentas.create o cuentas.request) o editarla (con cuentas.update). Sin este permiso, la cuenta nueva se asigna a quien la crea y la edición conserva sus propietarios. No amplía el acceso a otras cuentas.",
+      ],
+      [
+        "contactos.request",
+        "Registrar contactos nuevos como Pendientes de activación para revisión, si el flujo de pendientes está habilitado. No permite activarlos; si también tienes contactos.create, se crean activados.",
+      ],
+      [
+        "contactos.read",
+        "Ver los contactos asociados a cuentas de las que eres propietario. Para ampliar la consulta a contactos de otras cuentas se requiere además contactos.read_all. No permite crear ni editar contactos.",
+      ],
+      [
+        "contactos.read_all",
+        "Ampliar a todas las cuentas el alcance de contactos.read. Requiere también contactos.read; junto con permisos de creación o edición, permite operar contactos de otras cuentas. No concede creación ni edición por sí solo.",
+      ],
+      [
+        "contactos.create",
+        "Crear contactos activos asociados a una cuenta accesible, sujetos a validaciones y revisión de posibles duplicados. Junto con contactos.update permite cambiar el estado; elegir otra cuenta requiere acceso a ella.",
+      ],
+      [
+        "contactos.update",
+        "Actualizar los datos y la información relacional de contactos dentro de tu alcance. No permite crearlos; cambiar su estado de activación requiere también contactos.create. contactos.read_all amplía el alcance a contactos de todas las cuentas.",
+      ],
+      [
+        "cotizaciones.operacion",
+        "Crear y preparar cotizaciones, solicitar su aprobacion, enviarlas y registrar su resultado comercial segun el estado. Aprobarlas requiere ademas autorizacion para aprobar sin IA o con IA.",
+      ],
+      [
+        "cotizaciones.ingreso",
+        "Gestionar el ingreso de cotizaciones: editar borradores, solicitar aprobacion, registrar como ganada una cotizacion aprobada o devolver una ganada a borrador, segun las reglas del flujo.",
+      ],
+      [
+        "cotizaciones.revision",
+        "Revisar, corregir y rechazar cotizaciones en el flujo de aprobacion. Este permiso no aprueba por si solo: se requiere ademas autorizacion para aprobar sin IA o con IA.",
+      ],
+      [
+        "cotizaciones.aprobacion_humana",
+        "Aprobar manualmente cotizaciones en estados habilitados. La accion sigue sujeta a las reglas de transicion y validaciones comerciales.",
+      ],
+      [
+        "cotizaciones.aprobacion_ia",
+        "Ejecutar la aprobacion asistida por IA en los estados habilitados. La accion depende de las reglas de transicion, las validaciones y el resultado del analisis.",
+      ],
+      [
+        "cotizaciones.administracion",
+        "Acceder a todas las acciones y al historial de versiones; crear o editar versiones incluso en estados avanzados. Es un permiso amplio, sujeto a las validaciones del flujo.",
+      ],
+      [
+        "cotizaciones.externo",
+        "Consultar, sin modificarlas, las cotizaciones disponibles para el cliente en estados aprobada, enviada, ganada o aceptada.",
+      ],
+      [
+        "aceptar_pedido.procesamiento.read",
+        "Consultar las etapas, el estado y los documentos del procesamiento posterior a la aceptación de una cotización. No permite editar información, generar contenido con IA ni enviar convocatorias.",
+      ],
+      [
+        "aceptar_pedido.procesamiento.update",
+        "Editar la información operativa de las etapas y gestionar sus documentos y evidencias para dar seguimiento al pedido aceptado.",
+      ],
+      [
+        "aceptar_pedido.procesamiento.ia",
+        "Generar o volver a generar resúmenes con IA a partir de las evidencias del procesamiento, cuando haya contenido compatible disponible.",
+      ],
+      [
+        "aceptar_pedido.procesamiento.convocar",
+        "Enviar convocatorias y notificaciones de kick off asociadas al procesamiento del pedido. No concede permisos para editar las etapas ni generar resúmenes con IA.",
+      ],
+    ]);
+
+    for (const code of expectedDescriptions.keys()) {
+      await query(
+        "UPDATE permissions SET description = 'Descripcion anterior' WHERE code = ?",
+        [code],
+      );
+    }
+
+    await ensureCorePermissions({ autoAssignRoles: false });
+
+    const placeholders = [...expectedDescriptions.keys()].map(() => "?").join(", ");
+    const rows = await query(
+      `SELECT code, description FROM permissions WHERE code IN (${placeholders})`,
+      [...expectedDescriptions.keys()],
+    );
+    expect(
+      Object.fromEntries(rows.map(({ code, description }) => [code, description])),
+    ).toEqual(Object.fromEntries(expectedDescriptions));
+  });
+
+  test("ensureCommercialEnablementPermissions actualiza descripciones existentes", async () => {
+    const expectedDescriptions = new Map([
+      [
+        "enablement_comercial.use",
+        "Consultar materiales activos, revisar su detalle y usarlos, por ejemplo, descargarlos, marcarlos como favoritos o generar enlaces compartibles cuando el material lo permite. No concede carga ni edicion.",
+      ],
+      [
+        "enablement_comercial.upload",
+        "Crear materiales y editar los propios, incluidos sus archivos o enlaces; permite activarlos y desactivarlos. No permite modificar o eliminar materiales ajenos ni administrar catalogos.",
+      ],
+      [
+        "enablement_comercial.manage",
+        "Editar, activar o desactivar materiales de cualquier usuario y eliminar materiales. No concede administracion de los catalogos de la biblioteca.",
+      ],
+      [
+        "enablement_comercial.admin",
+        "Crear, editar y eliminar valores de catalogos como tipos, fabricantes, tecnologias y soluciones. Tambien permite gestionar materiales de cualquier usuario, incluidos los restringidos.",
+      ],
+      [
+        "enablement_comercial.read",
+        "Permiso heredado que conserva acceso de consulta a materiales activos. No permite cargarlos, editarlos ni administrar catalogos.",
+      ],
+      [
+        "enablement_comercial.update",
+        "Permiso heredado que conserva las capacidades de carga y edicion de materiales propios, incluida su activacion o desactivacion; no permite administrar materiales ajenos ni catalogos.",
+      ],
+      [
+        "enablement_comercial.analytics",
+        "Codigo heredado que actualmente conserva acceso de consulta a materiales activos. No habilita reportes o analitica de uso ni permite modificar materiales.",
+      ],
+    ]);
+
+    for (const code of expectedDescriptions.keys()) {
+      await query(
+        "UPDATE permissions SET description = 'Descripcion anterior' WHERE code = ?",
+        [code],
+      );
+    }
+
+    await ensureCommercialEnablementPermissions({ autoAssignRoles: false });
+
+    const placeholders = [...expectedDescriptions.keys()].map(() => "?").join(", ");
+    const rows = await query(
+      `SELECT code, description FROM permissions WHERE code IN (${placeholders})`,
+      [...expectedDescriptions.keys()],
+    );
+    expect(
+      Object.fromEntries(rows.map(({ code, description }) => [code, description])),
+    ).toEqual(Object.fromEntries(expectedDescriptions));
+  });
+
+  test("ensureDocumentacionRagPermissions actualiza descripciones existentes", async () => {
+    const expectedDescriptions = new Map([
+      [
+        "documentacion_rag.access",
+        "Entrar al modulo para consultar temas, documentos y su estado. No permite importar, cargar, reemplazar, clasificar ni eliminar contenido; el chatbot puede consultar documentos activos sin este permiso.",
+      ],
+      [
+        "documentacion_rag.manage",
+        "Gestionar temas y documentos: importar desde Pinecone Assistant, cargar o reemplazar archivos, actualizar resumen y clasificacion, eliminar documentos y habilitar o deshabilitar temas. Incluye acceso de consulta.",
+      ],
+    ]);
+
+    for (const code of expectedDescriptions.keys()) {
+      await query(
+        "UPDATE permissions SET description = 'Descripcion anterior' WHERE code = ?",
+        [code],
+      );
+    }
+
+    await ensureDocumentacionRagPermissions({
+      autoAssignAdministrators: false,
+    });
+
+    const placeholders = [...expectedDescriptions.keys()].map(() => "?").join(", ");
+    const rows = await query(
+      `SELECT code, description FROM permissions WHERE code IN (${placeholders})`,
+      [...expectedDescriptions.keys()],
+    );
+    expect(
+      Object.fromEntries(rows.map(({ code, description }) => [code, description])),
+    ).toEqual(Object.fromEntries(expectedDescriptions));
+  });
+
+  test("ensureLandingPermissions actualiza descripciones y repara asignaciones existentes", async () => {
     const roleId = await createRole({
       name: `${TEST_PREFIX}_landing_sync_role`,
       permissionCodes: ["desarrollo_comercial.read"],
     });
+
     cleanup.roleIds.push(roleId);
 
     const landingReadPermissionId = await query(
@@ -8822,6 +9037,10 @@ describe("API integration baseline", () => {
       "DELETE FROM role_permissions WHERE role_id = ? AND permission_id = ?",
       [roleId, landingReadPermissionId],
     );
+    await query(
+      "UPDATE permissions SET description = 'Descripcion anterior' WHERE id = ?",
+      [landingReadPermissionId],
+    );
 
     await ensureLandingPermissions({ autoAssignRoles: false });
 
@@ -8829,8 +9048,132 @@ describe("API integration baseline", () => {
       "SELECT COUNT(*) AS total FROM role_permissions WHERE role_id = ? AND permission_id = ?",
       [roleId, landingReadPermissionId],
     );
+    const [permission] = await query(
+      "SELECT description FROM permissions WHERE id = ?",
+      [landingReadPermissionId],
+    );
 
     expect(Number(rows.total)).toBe(1);
+    expect(permission.description).toBe(
+      "Consultar el listado y el detalle de las paginas de captacion y sus versiones",
+    );
+  });
+
+  test("ensureInteractionPermissions actualiza las descripciones del catálogo de leads", async () => {
+    const [permission] = await query(
+      "SELECT id FROM permissions WHERE code = 'interacciones.read' LIMIT 1",
+    );
+    const [sellerEligibilityPermission] = await query(
+      "SELECT id FROM permissions WHERE code = 'comercial.seller.eligible' LIMIT 1",
+    );
+    expect(Number(permission?.id)).toBeGreaterThan(0);
+    expect(Number(sellerEligibilityPermission?.id)).toBeGreaterThan(0);
+
+    await query(
+      "UPDATE permissions SET description = 'Descripcion anterior' WHERE id = ?",
+      [permission.id],
+    );
+    await query(
+      "UPDATE permissions SET description = 'Descripcion anterior' WHERE id = ?",
+      [sellerEligibilityPermission.id],
+    );
+
+    await ensureInteractionPermissions({ autoAssignRoles: false });
+
+    const [updatedPermission] = await query(
+      "SELECT description FROM permissions WHERE id = ?",
+      [permission.id],
+    );
+    expect(updatedPermission.description).toBe(
+      "Consultar la bandeja y el detalle de leads dentro del alcance permitido",
+    );
+    const [updatedSellerEligibilityPermission] = await query(
+      "SELECT description FROM permissions WHERE id = ?",
+      [sellerEligibilityPermission.id],
+    );
+    expect(updatedSellerEligibilityPermission.description).toBe(
+      "Habilita al usuario para ser asignado como vendedor al resolver leads. No concede acceso a leads ni permisos para asignarlos.",
+    );
+  });
+
+  test("ensureCampaignPermissions sincroniza las descripciones de campañas existentes", async () => {
+    await ensureCampaignPermissions({ autoAssignRoles: false });
+    const expectedDescriptions = new Map([
+      [
+        "campanas.read",
+        "Consultar catálogos, campañas, sugerencias de cuentas y la audiencia asociada. No permite crear ni modificar campañas.",
+      ],
+      [
+        "campanas.create",
+        "Crear campañas con su contexto comercial, tipo, subtipo y etapa objetivo, sujeto a las combinaciones permitidas. No concede edición posterior.",
+      ],
+      [
+        "campanas.update",
+        "Modificar los datos y el estado de las campañas, y administrar su audiencia por cuenta y los contactos asociados.",
+      ],
+    ]);
+
+    for (const [code, description] of expectedDescriptions) {
+      const [permission] = await query(
+        "SELECT id FROM permissions WHERE code = ? LIMIT 1",
+        [code],
+      );
+      expect(Number(permission?.id)).toBeGreaterThan(0);
+      await query(
+        "UPDATE permissions SET description = 'Descripcion anterior' WHERE id = ?",
+        [permission.id],
+      );
+    }
+
+    await ensureCampaignPermissions({ autoAssignRoles: false });
+
+    for (const [code, description] of expectedDescriptions) {
+      const [permission] = await query(
+        "SELECT description FROM permissions WHERE code = ? LIMIT 1",
+        [code],
+      );
+      expect(permission.description).toBe(description);
+    }
+  });
+
+  test("ensureCommercialCalendarPermissions sincroniza las descripciones de agenda existentes", async () => {
+    await ensureCommercialCalendarPermissions({ autoAssignRoles: false });
+    const expectedDescriptions = new Map([
+      [
+        "calendario_comercial.read",
+        "Consultar las actividades y alertas de la agenda propia. No permite ver la agenda de otros vendedores ni crear o modificar actividades.",
+      ],
+      [
+        "calendario_comercial.read_all",
+        "Consultar las actividades y alertas de todos los vendedores y seleccionar a quién mostrar en la agenda. No concede permisos para crear o modificar actividades.",
+      ],
+      [
+        "calendario_comercial.update",
+        "Crear actividades, reprogramarlas y actualizar su estado desde la agenda. Las actividades de oportunidades también requieren los permisos correspondientes para modificar esas oportunidades.",
+      ],
+    ]);
+
+    for (const [code] of expectedDescriptions) {
+      const [permission] = await query(
+        "SELECT id FROM permissions WHERE code = ? LIMIT 1",
+        [code],
+      );
+      expect(Number(permission?.id)).toBeGreaterThan(0);
+      await query(
+        "UPDATE permissions SET description = 'Descripcion anterior' WHERE id = ?",
+        [permission.id],
+      );
+    }
+
+    await ensureCommercialCalendarPermissions({ autoAssignRoles: false });
+
+    for (const [code, description] of expectedDescriptions) {
+      const [permission] = await query(
+        "SELECT description FROM permissions WHERE code = ? LIMIT 1",
+        [code],
+      );
+      expect(permission.description).toBe(description);
+    }
   });
 
   test("usuarios.update bloquea desactivacion si dejaria cuentas activas sin propietarios activos", async () => {

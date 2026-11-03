@@ -26,7 +26,7 @@ const TECHNICAL_SCOPE_PERMISSIONS = [
     module: "playbooks",
     action: "manage",
     description:
-      "Administrar playbooks tecnicos por solucion: preguntas, alcance, reglas y plantillas de topologia",
+      "Editar playbooks tecnicos por solucion y sus metadatos, vincular temas de Documentacion RAG, generar borradores y guardar versiones",
   },
 ];
 

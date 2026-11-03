@@ -5,85 +5,96 @@ const INTERACTION_PERMISSIONS = [
     code: "interacciones.read",
     module: "interacciones",
     action: "read",
-    description: "Ver interacciones",
+    description:
+      "Consultar la bandeja y el detalle de leads dentro del alcance permitido",
   },
   {
     code: "interacciones.read_all",
     module: "interacciones",
     action: "read_all",
-    description: "Ver todas las interacciones",
+    description:
+      "Ampliar la consulta de leads más allá del alcance individual; no concede creación ni edición",
   },
   {
     code: "interacciones.create",
     module: "interacciones",
     action: "create",
-    description: "Crear interacciones",
+    description:
+      "Crear leads y registrar sus datos iniciales y documentos de ingreso",
   },
   {
     code: "interacciones.update",
     module: "interacciones",
     action: "update",
-    description: "Actualizar interacciones",
+    description:
+      "Editar leads y gestionar su información, documentos y seguimiento",
   },
   {
     code: "interacciones.analyze",
     module: "interacciones",
     action: "analyze",
-    description: "Analizar interacciones",
+    description:
+      "Ejecutar análisis de leads y consultar hallazgos y sugerencias sin aplicarlos al CRM",
   },
   {
     code: "interacciones.resolve",
     module: "interacciones",
     action: "resolve",
-    description: "Resolver interacciones",
+    description:
+      "Revisar sugerencias de un lead y vincular o crear los registros correspondientes en el CRM",
   },
   {
     code: "interacciones.dashboard.access",
     module: "interacciones",
     action: "dashboard_access",
-    description: "Entrar a tableros de leads",
+    description:
+      "Habilitar la entrada a tableros de leads; la vista de cada tablero requiere su permiso específico",
   },
   {
     code: "interacciones.dashboard.executive.view",
     module: "interacciones",
     action: "dashboard_executive_view",
-    description: "Ver tablero ejecutivo de leads",
+    description: "Consultar indicadores ejecutivos del desempeño de los leads",
   },
   {
     code: "interacciones.dashboard.management.view",
     module: "interacciones",
     action: "dashboard_management_view",
-    description: "Ver tablero de gestion comercial de leads",
+    description: "Consultar indicadores de gestión comercial y seguimiento de leads",
   },
   {
     code: "interacciones.dashboard.operations.view",
     module: "interacciones",
     action: "dashboard_operations_view",
-    description: "Ver tablero operativo de leads",
+    description: "Consultar la situación operativa y el estado de atención de los leads",
   },
   {
     code: "interacciones.dashboard.drilldown.view",
     module: "interacciones",
     action: "dashboard_drilldown_view",
-    description: "Abrir drilldown del tablero de leads hacia la bandeja",
+    description:
+      "Permiso previsto para abrir desde un tablero el detalle de sus indicadores en la bandeja",
   },
   {
     code: "interacciones.resolve.assign_self",
     module: "interacciones",
     action: "resolve_assign_self",
-    description: "Resolver interacciones asignando solo al usuario actual",
+    description:
+      "Al resolver un lead propio, asignarlo al usuario actual; requiere permiso de resolución y elegibilidad como vendedor",
   },
   {
     code: "interacciones.resolve.assign_any",
     module: "interacciones",
     action: "resolve_assign_any",
-    description: "Resolver interacciones asignando cualquier vendedor",
+    description:
+      "Al resolver un lead, asignarlo a cualquier vendedor elegible; requiere permiso de resolución",
   },
   {
     code: "comercial.seller.eligible",
     module: "comercial",
     action: "seller_eligible",
-    description: "Usuario elegible para ser asignado como vendedor",
+    description:
+      "Habilita al usuario para ser asignado como vendedor al resolver leads. No concede acceso a leads ni permisos para asignarlos.",
   },
 ];
 
@@ -110,6 +121,12 @@ export async function ensureInteractionPermissions(options = {}) {
           now,
           permission.code,
         ],
+      );
+      await conn.query(
+        `UPDATE permissions
+         SET description = ?, updated_at = ?
+         WHERE code = ? AND IFNULL(description, '') <> ?`,
+        [permission.description, now, permission.code, permission.description],
       );
     }
 

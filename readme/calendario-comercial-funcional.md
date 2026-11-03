@@ -1,14 +1,14 @@
-# Modulo Calendario Comercial - Documento Funcional Corto
+# Agenda - Documento Funcional Corto
 
 ## 1. Objetivo
-Definir reglas operativas y de seguridad para el nuevo modulo Calendario Comercial, con foco en:
+Definir reglas operativas y de seguridad para el módulo Agenda, con foco en:
 
 1. Permisos especificos del modulo.
 2. Timezone oficial para alertas del dia.
 3. Fuente unica de verdad para actividad pendiente.
 
 ## 2. Alcance funcional
-El modulo Calendario Comercial debe incluir dos secciones:
+El módulo Agenda debe incluir dos secciones:
 
 1. Calendario de actividades creadas (vista dia, semana, mes).
 2. Alertas del dia (pendientes de hoy, vencidas, proximas).
@@ -17,18 +17,18 @@ Debe permitir seleccionar vendedor solo cuando el usuario tenga permiso global.
 
 ## 3. Reglas finales
 
-### 3.1 Permisos del modulo calendario
+### 3.1 Permisos de Agenda
 Se definen estos permisos nuevos:
 
-1. `calendario_comercial.read`: acceso al modulo y visualizacion de agenda propia.
-2. `calendario_comercial.read_all`: visualizacion de agenda de todos los vendedores.
-3. `calendario_comercial.update`: crear, reprogramar o actualizar estado desde calendario.
+1. `calendario_comercial.read`: consultar las actividades y alertas de la agenda propia; no permite ver la agenda de otros vendedores ni modificar actividades.
+2. `calendario_comercial.read_all`: consultar las actividades y alertas de todos los vendedores y seleccionar a quién mostrar en la agenda; no permite modificar actividades.
+3. `calendario_comercial.update`: crear actividades, reprogramarlas y actualizar su estado. Las actividades de oportunidades requieren además los permisos correspondientes de oportunidades.
 
 Reglas de acceso:
 
 1. Un usuario con `calendario_comercial.read` y sin `calendario_comercial.read_all` solo puede ver su agenda.
 2. El selector de vendedor se habilita solo para usuarios con `calendario_comercial.read_all`.
-3. Para usar acciones de edicion en calendario, el usuario debe tener `calendario_comercial.update`.
+3. Para usar acciones de edición en Agenda, el usuario debe tener `calendario_comercial.update`.
 
 ### 3.2 Timezone oficial para alertas del dia
 Timezone oficial de negocio:

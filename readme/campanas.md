@@ -1,8 +1,8 @@
-# Campanas
+# Campañas
 
 ## Alcance
 
-Este documento describe el modulo de Campanas del CRM, incluyendo:
+Este documento describe el módulo de Campañas del CRM, incluyendo:
 
 - catalogos de tipo, subtipo, estado y etapa de ciclo de vida;
 - creacion y edicion de campanas;
@@ -73,11 +73,11 @@ Relacion con otros modulos:
 
 ## Permisos requeridos
 
-Permisos del modulo:
+Permisos del módulo:
 
-- `campanas.read`: ver catalogos, listados, detalle y audiencia.
-- `campanas.create`: crear campanas.
-- `campanas.update`: editar campanas y audiencia.
+- `campanas.read`: consultar catálogos, campañas, sugerencias de cuentas y la audiencia asociada; no permite crear ni modificar campañas.
+- `campanas.create`: crear campañas con su contexto comercial, tipo, subtipo y etapa objetivo, sujeto a las combinaciones permitidas.
+- `campanas.update`: modificar los datos y el estado de las campañas, y administrar su audiencia por cuenta y los contactos asociados.
 
 Asignacion automatica actual:
 

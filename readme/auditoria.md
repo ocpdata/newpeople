@@ -1,8 +1,8 @@
-# Auditoria
+# Auditoría
 
 ## Alcance
 
-Modulo de auditoria transversal del sistema para registrar y consultar eventos
+Módulo de auditoría transversal del sistema para registrar y consultar eventos
 de seguridad y operaciones de negocio.
 
 Incluye eventos de:
@@ -69,7 +69,7 @@ Filtros soportados:
 
 Permiso requerido:
 
-- audit.read
+- `audit.read`: permite consultar la bitácora global, filtrar eventos y revisar sus detalles y cambios. Es de solo lectura; no permite modificar ni eliminar registros.
 
 ## Modelo de datos de auditoria
 

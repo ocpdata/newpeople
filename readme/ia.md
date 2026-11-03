@@ -165,8 +165,11 @@ La sección **Crédito IA** está organizada en cinco pestañas:
   usuario activo (ver abajo).
 - **Tarifas:** precios por modelo, ahora capturados en USD por millón de tokens.
 
-Lectura y edición usan los permisos existentes
-(`ia.budget.read_all`/`configuracion.read` y `ia.budget.manage`/`configuracion.update`).
+En **Roles y permisos**, esta subsección aparece como **Crédito y consumo de IA**.
+La consulta global de servicios y tarifas usa
+`ia.budget.read_all`/`configuracion.read`; su administración usa
+`ia.budget.manage`/`configuracion.update`. Los reportes agregados requieren
+`ia.usage.read_all` (o permiso de lectura global de crédito/configuración).
 
 ### Modelos por tipo de trabajo
 
@@ -267,23 +270,25 @@ El analisis puede devolver campos vacios aunque la IA este funcionando correctam
 
 En esos casos deben prevalecer warnings y confianza baja, no valores inventados.
 
-## Biblioteca Documentación RAG
+## Base de conocimiento IA
 
-El módulo **Documentación RAG** administra una biblioteca de documentos en
+El módulo **Base de conocimiento IA** administra una biblioteca de documentos en
 Pinecone Assistant. Los temas agrupan los archivos y permiten habilitar o
-deshabilitar su uso en las consultas. Los archivos se cargan, reemplazan y
-eliminan desde la aplicación; Pinecone Assistant realiza su extracción,
-fragmentación e indexación. El sistema conserva en la base de datos los
-metadatos, estados de operación y resúmenes breves.
+deshabilitar su uso en las consultas. Los archivos se importan, cargan,
+reemplazan y eliminan desde la aplicación; Pinecone Assistant realiza su
+extracción, fragmentación e indexación. El sistema conserva en la base de datos
+los metadatos, estados de operación, clasificación y resúmenes breves.
 
-El permiso `documentacion_rag.access` permite entrar y consultar el contenido
-del módulo. `documentacion_rag.manage` permite además administrar temas y
-documentos, e incluye acceso aunque no se asigne también el permiso de lectura.
-Ambos permisos se asignan inicialmente a los roles de sistema y al rol
-Administrador; otros roles se configuran desde la administración de roles. Los
-usuarios que no tienen esos permisos también pueden consultar los documentos
-activos a través del chatbot. La respuesta puede usar los fragmentos como
-evidencia, pero no debe citar ni identificar los documentos RAG.
+El permiso `documentacion_rag.access` permite entrar al módulo para consultar
+temas, documentos y su estado, pero no modificarlos. `documentacion_rag.manage`
+permite importar desde Pinecone Assistant, cargar o reemplazar archivos,
+actualizar resúmenes y clasificación, eliminar documentos y habilitar o
+deshabilitar temas; incluye acceso de consulta. Ambos permisos se asignan
+inicialmente a los roles de sistema y al rol Administrador; otros roles se
+configuran desde la administración de roles. El permiso de acceso al módulo no
+es requisito para que el chatbot consulte documentos activos. La respuesta puede
+usar sus fragmentos como evidencia, pero no debe citar ni identificar los
+documentos de la biblioteca.
 
 Configuración en `apps/api/.env`:
 

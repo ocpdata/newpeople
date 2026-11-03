@@ -149,7 +149,7 @@ solo si está aprobado (`sow_not_approved` en caso contrario).
 |---|---|
 | `propuestas.alcance_tecnico.update` | Capturar el cuestionario, generar y editar el alcance y el SOW |
 | `propuestas.alcance_tecnico.approve` | Aprobar alcance y SOW (el preventa asignado también puede) |
-| `playbooks.manage` | Administrar playbooks (`/technical-playbooks`) |
+| `playbooks.manage` | Administrar playbooks técnicos por solución: editar contenido y metadatos, vincular temas de Documentación RAG, generar borradores y guardar versiones (`/technical-playbooks`). No concede permiso para aprobar propuestas. |
 
 Administrador los recibe siempre al arrancar la API; `Preventa` los recibe en la inicialización de roles.
 

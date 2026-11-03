@@ -15,25 +15,29 @@ const COMMERCIAL_PLANNING_PERMISSIONS = [
     code: "planeacion_comercial.read",
     module: "planeacion_comercial",
     action: "read",
-    description: "Ver planeacion comercial trimestral",
+    description:
+      "Consultar metas trimestrales, tasas de comision y seguimiento de ventas aceptadas y comisiones",
   },
   {
     code: "planeacion_comercial.create",
     module: "planeacion_comercial",
     action: "create",
-    description: "Crear periodos de planeacion comercial",
+    description:
+      "Guardar por primera vez las metas y la configuracion de comisiones de un ano",
   },
   {
     code: "planeacion_comercial.update",
     module: "planeacion_comercial",
     action: "update",
-    description: "Editar metas trimestrales de planeacion comercial",
+    description:
+      "Actualizar cuotas y margenes esperados por vendedor, y tasas de comision por trimestre y categoria",
   },
   {
     code: "planeacion_comercial.audit.read",
     module: "planeacion_comercial",
     action: "audit.read",
-    description: "Consultar auditoria de planeacion comercial",
+    description:
+      "Consultar la trazabilidad de cambios en la configuracion trimestral de planeacion y comisiones",
   },
 ];
 
