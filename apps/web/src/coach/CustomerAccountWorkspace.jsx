@@ -89,12 +89,7 @@ export function CustomerAccountWorkspace({ askCustomerChat, canCreateActions, ca
             </p>
           ) : null}
         </section>
-      ) : (
-        <div className="mi-agent-empty">
-          Selecciona una cuenta para revisar salud, riesgos e historial
-          comercial.
-        </div>
-      )}
+      ) : null}
       <CustomerChatPanel
         chat={customerChat}
         navigate={navigate}

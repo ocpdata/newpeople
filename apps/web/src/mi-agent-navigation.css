@@ -64,10 +64,10 @@
   margin-bottom: 0;
 }
 .mi-agent-customer-workspace > .mi-agent-customer-actions {
-  order: 8;
+  order: 9;
 }
 .mi-agent-customer-workspace > .mi-agent-customer-chat {
-  order: 9;
+  order: 8;
 }
 .mi-agent-customer-operation-list {
   display: grid;

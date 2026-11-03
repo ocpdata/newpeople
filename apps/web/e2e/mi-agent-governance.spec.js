@@ -3845,6 +3845,14 @@ test.describe("Mi Coach governance and workspaces", () => {
     await openMiCoach(page, { workspace: "customer" });
     await page.getByLabel("Cuenta existente").selectOption("160");
     const chat = page.getByRole("region", { name: "Chat de cuenta" });
+    const accountAnalysis = page.getByRole("region", { name: "Analizar cuenta" });
+    const chatTop = await chat.evaluate((element) =>
+      element.getBoundingClientRect().top,
+    );
+    const accountAnalysisTop = await accountAnalysis.evaluate((element) =>
+      element.getBoundingClientRect().top,
+    );
+    expect(chatTop).toBeLessThan(accountAnalysisTop);
     const question = chat.getByRole("textbox", { name: "Pregunta sobre la cuenta" });
     await expect(question).toHaveJSProperty("tagName", "TEXTAREA");
     await expect(chat.getByText("Preguntas sugeridas")).toHaveCount(0);
