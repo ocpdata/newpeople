@@ -32,7 +32,8 @@ test("organiza las opciones autorizadas en seis divisiones sin cambiar rutas", a
   ]);
   const expected = [
     ["Inicio", [
-      ["Inicio", "/"], ["Indicadores", "/dashboards"], ["Agenda", "/calendar"], ["Mi coach", "/mi-agent"],
+      ["Inicio", "/"], ["Indicadores", "/dashboards"], ["Reportes", "/reports"],
+      ["Agenda", "/calendar"], ["Mi coach", "/mi-agent"],
     ]],
     ["Ventas", [
       ["Cuentas", "/accounts"], ["Contactos", "/contacts"], ["Mapa de relaciones", "/contact-mapping"],
@@ -69,6 +70,16 @@ test("organiza las opciones autorizadas en seis divisiones sin cambiar rutas", a
   await expect(page.locator(".sidebar").getByRole("button", { name: "Cerrar sesión" })).toBeVisible();
 });
 
+test("abre el módulo de reportes sin mostrar reportes no autorizados", async ({ page }) => {
+  await openApp(page, []);
+  const sidebar = page.locator(".sidebar");
+  await expect(sidebar.getByRole("link", { name: "Reportes" })).toHaveAttribute("href", "/reports");
+  await sidebar.getByRole("link", { name: "Reportes" }).click();
+  await expect(page.locator("h2")).toHaveText("Reportes");
+  await expect(page.getByText(/No hay reportes disponibles con tus permisos actuales/)).toBeVisible();
+  await expect(page.getByRole("link", { name: /Cuota mensual/ })).toHaveCount(0);
+});
+
 for (const { permissions, group, link } of [
   { permissions: ["propuestas.read"], group: "Ventas", link: "Propuestas" },
   { permissions: ["proveedores.read"], group: "Operaciones", link: "Proveedores" },
@@ -79,7 +90,7 @@ for (const { permissions, group, link } of [
     await openApp(page, permissions);
     const sidebar = page.locator(".sidebar");
     await expect(sidebar.locator(".sidebar-nav-group-title > span:first-child")).toHaveText(["Inicio", group]);
-    await expect(sidebar.getByRole("link")).toHaveText(["Inicio", link]);
+    await expect(sidebar.getByRole("link")).toHaveText(["Inicio", "Reportes", link]);
   });
 }
 

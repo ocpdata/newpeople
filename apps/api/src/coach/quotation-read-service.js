@@ -1,14 +1,5 @@
 import { query } from "../db.js";
-
-const QUOTATION_READ_PERMISSIONS = [
-  "cotizaciones.operacion",
-  "cotizaciones.revision",
-  "cotizaciones.ingreso",
-  "cotizaciones.aprobacion_humana",
-  "cotizaciones.aprobacion_ia",
-  "cotizaciones.administracion",
-  "cotizaciones.externo",
-];
+import { QUOTATION_READ_PERMISSIONS } from "../../../../shared/quotation-permissions.js";
 
 export function hasQuotationReadAccess(user) {
   return QUOTATION_READ_PERMISSIONS.some((permission) =>

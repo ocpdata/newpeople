@@ -1,0 +1,151 @@
+import { expect, test } from "@playwright/test";
+
+const quotation = (id, status, matches, currency = "USD") => ({
+  id, versionNumber: 2, proposalName: `Propuesta ${id}`,
+  statusCode: status, statusName: status === "aceptada" ? "Aceptada" : "Borrador",
+  activationStatus: "Activada", quotationDate: "2026-11-02",
+  currency, exchangeRate: currency === "USD" ? 1 : 20, totalAmount: 104.4, matchesFilters: matches,
+});
+const opportunity = {
+  id: 3, name: "Proyecto comercial", accountId: 1, accountName: "Cuenta visible",
+  amountUsd: 300, expectedCloseDate: "2026-11-15", actualCloseDate: "2026-11-03T23:59:59.000Z",
+  sellerName: "Vendedor", presalesName: "Preventa", salesStage: "Waiting",
+  commercialStatusCode: "ganada", commercialStatusName: "Ganada", activationStatus: "Activada",
+  quotations: [quotation(301, "aceptada", true), quotation(302, "borrador", false, "MXN")],
+};
+const payload = {
+  page: 1, pageSize: 10, total: 11,
+  summary: {
+    opportunityCount: 11, wonCount: 3, opportunityAmountUsd: 1500,
+    quotationCount: 5, acceptedCount: 2, matchingCount: 2,
+    currencies: [{ currency: "USD", amount: 365.4, matchingAmount: 208.8 }],
+  },
+  items: [opportunity],
+};
+
+async function openReport(page, { permissions = ["oportunidades.read", "cotizaciones.operacion"], fail = false } = {}) {
+  const requests = [];
+  await page.addInitScript(() => window.localStorage.setItem("crm_token", "report-test"));
+  await page.route("**/api/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/auth/bootstrap-status") return route.fulfill({ json: { hasUsers: true } });
+    if (url.pathname === "/api/auth/me") return route.fulfill({
+      json: { id: 501, full_name: "Usuario reportes", permissions },
+    });
+    if (url.pathname === "/api/reports/opportunities-quotations/catalogs") return route.fulfill({
+      json: {
+        accounts: [{ id: 1, name: "Cuenta visible" }],
+        sellers: [{ id: 19, name: "Vendedor" }], presales: [{ id: 20, name: "Preventa" }],
+      },
+    });
+    if (url.pathname === "/api/reports/opportunities-quotations") {
+      requests.push(Object.fromEntries(url.searchParams));
+      if (fail) {
+        return route.fulfill({ status: 500, json: { message: "No fue posible consultar el reporte" } });
+      }
+      const empty = url.searchParams.get("search") === "sin resultados";
+      return route.fulfill({
+        json: {
+          ...payload, page: Number(url.searchParams.get("page") || 1),
+          ...(empty ? { total: 0, items: [], summary: { ...payload.summary, opportunityCount: 0 } } : {}),
+        },
+      });
+    }
+    return route.fulfill({ json: [] });
+  });
+  await page.goto("/reports");
+  return requests;
+}
+
+test("navega desde Reportes y muestra las cotizaciones actuales agrupadas", async ({ page }) => {
+  await openReport(page);
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  await expect(page.getByRole("heading", { name: "Oportunidades y cotizaciones" })).toBeVisible();
+  await expect(page.getByText("#3 Proyecto comercial", { exact: true })).toBeVisible();
+  const opportunityRow = page.getByRole("row").filter({ has: page.getByText("#3 Proyecto comercial", { exact: true }) });
+  await expect(opportunityRow.getByRole("cell", { name: "300.00", exact: true })).toBeVisible();
+  await expect(opportunityRow.getByText("#301: 104.40 USD", { exact: true })).toBeVisible();
+  await expect(opportunityRow.getByText("#302: 104.40 MXN")).toBeVisible();
+  await expect(opportunityRow.getByRole("cell", { name: /#302: 5.22 USD/ })).toBeVisible();
+  await expect(opportunityRow.getByRole("cell", { name: /#302: 1 USD = 20 MXN/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Equivalentes de cotizaciones (USD)", exact: true })).toBeVisible();
+  await expect(opportunityRow.getByText(/Tipo de cambio faltante o inválido/)).toHaveCount(0);
+  await page.getByText(/Cotizaciones de #3:/).click();
+  const quotations = page.getByRole("table", { name: "Cotizaciones de Proyecto comercial" });
+  await expect(quotations.getByText("#301 Propuesta 301")).toBeVisible();
+  await expect(quotations.getByText("#302 Propuesta 302")).toBeVisible();
+  await expect(quotations.getByRole("cell", { name: "5.22 USD", exact: true })).toBeVisible();
+  await expect(quotations.getByRole("cell", { name: "104.40 MXN", exact: true })).toBeVisible();
+  await expect(quotations.getByRole("cell", { name: "1 USD = 20 MXN (guardado)", exact: true })).toBeVisible();
+  await page.getByLabel("Mostrar cotizaciones").selectOption("matching");
+  await expect(quotations.getByText("#301 Propuesta 301")).toBeVisible();
+  await expect(quotations.getByText("#302 Propuesta 302")).toHaveCount(0);
+  await expect(opportunityRow.getByText("#302: 104.40 MXN")).toHaveCount(0);
+  await expect(opportunityRow.getByText("#301: 104.40 USD", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cotizado USD: 208.80")).toBeVisible();
+  await expect(page.getByRole("columnheader").filter({ hasText: /Estado|Activación|Fecha|Cierre/ })).toHaveCount(0);
+});
+
+test("muestra la falta de tipo de cambio sin asumir una conversión", async ({ page }) => {
+  await openReport(page);
+  await page.route("**/api/reports/opportunities-quotations?**", (route) => route.fulfill({
+    json: {
+      ...payload,
+      items: [{
+        ...opportunity,
+        quotations: [{ ...quotation(302, "borrador", true, "MXN"), exchangeRate: null }],
+      }],
+    },
+  }));
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  await expect(page.getByText(/Tipo de cambio faltante o inválido/).first()).toBeVisible();
+  await expect(page.getByText(/#302: 5.22 USD/)).toHaveCount(0);
+});
+
+test("aplica filtros combinados, pagina y limpia sin enviar filtros vacíos", async ({ page }) => {
+  const requests = await openReport(page);
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  await expect(page.getByRole("button", { name: "Siguiente", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Siguiente", exact: true }).click();
+  await expect(page.getByText("Página 2 de 2")).toBeVisible();
+  await page.getByLabel("Consulta rápida").selectOption("both");
+  await page.getByLabel("Cuenta", { exact: true }).selectOption("1");
+  await page.getByLabel("Vendedor", { exact: true }).selectOption("19");
+  await page.getByLabel("Preventa", { exact: true }).selectOption("20");
+  await page.getByRole("group", { name: /Estado de cotización/ }).getByLabel("Aceptada", { exact: true }).check();
+  await page.getByLabel("Fecha a filtrar").selectOption("actual_close");
+  await page.getByLabel("Desde", { exact: true }).fill("2026-11-01");
+  await page.getByLabel("Hasta", { exact: true }).fill("2026-11-30");
+  await page.getByRole("button", { name: "Aplicar filtros" }).click();
+  await expect(page.getByText("Página 1 de 2")).toBeVisible();
+  expect(requests.at(-1)).toMatchObject({
+    preset: "both", accountId: "1", sellerUserId: "19", presalesUserId: "20",
+    quotationStatuses: "aceptada", dateType: "actual_close",
+    dateFrom: "2026-11-01", dateTo: "2026-11-30", page: "1",
+  });
+  await page.getByRole("button", { name: "Limpiar", exact: true }).click();
+  await expect(page.getByLabel("Cuenta", { exact: true })).toHaveValue("");
+  await expect.poll(() => requests.at(-1)?.preset).toBe("all");
+  expect(requests.at(-1)).not.toHaveProperty("dateFrom");
+  expect(requests.at(-1)).not.toHaveProperty("quotationStatuses");
+  await page.getByLabel("Buscar oportunidad o cuenta").fill("sin resultados");
+  await page.getByRole("button", { name: "Aplicar filtros" }).click();
+  await expect(page.getByText("No hay resultados para los filtros seleccionados.")).toBeVisible();
+});
+
+test("expone errores y permite reintentar el reporte", async ({ page }) => {
+  await openReport(page, { fail: true });
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  await expect(page.getByRole("alert")).toContainText("No fue posible consultar el reporte");
+  await page.route("**/api/reports/opportunities-quotations?**", (route) => route.fulfill({ json: payload }));
+  await page.getByRole("button", { name: "Reintentar reporte" }).click();
+  await expect(page.getByText("#3 Proyecto comercial", { exact: true })).toBeVisible();
+});
+
+test("no consulta datos ni ofrece la tarjeta sin acceso a ambos módulos", async ({ page }) => {
+  const requests = await openReport(page, { permissions: ["oportunidades.read_all"] });
+  await expect(page.getByRole("link", { name: /Oportunidades y cotizaciones/ })).toHaveCount(0);
+  await page.goto("/reports/opportunities-quotations");
+  await expect(page.getByRole("alert")).toContainText("Acceso insuficiente");
+  expect(requests).toHaveLength(0);
+});

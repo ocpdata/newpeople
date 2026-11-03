@@ -16,6 +16,7 @@ Este directorio centraliza la documentacion funcional y tecnica por modulo.
 - [Leads](./leads.md)
 - [Calculos y Planeacion Comercial](./calculos.md)
 - [Dashboards](./dashboards.md)
+- [Reportes de oportunidades y cotizaciones](./reportes.md)
 - [Campanas](./campanas.md)
 - [Landing](./landing.md)
 - [Correos de campana](./correos-campana.md)

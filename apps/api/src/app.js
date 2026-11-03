@@ -11,6 +11,7 @@ import contactRoutes from "./routes.contacts.js";
 import providerRoutes from "./routes.providers.js";
 import opportunityRoutes from "./routes.opportunities.js";
 import quotationRoutes from "./routes.quotations.js";
+import reportRoutes from "./routes.reports.js";
 import quotationPublicRoutes from "./routes.quotations-public.js";
 import interactionRoutes from "./routes.interactions.js";
 import catalogRoutes from "./routes.catalogs.js";
@@ -128,6 +129,7 @@ export function createApp() {
   app.use("/api/contacts", authRequired, loadUser, contactRoutes);
   app.use("/api/providers", authRequired, loadUser, providerRoutes);
   app.use("/api/opportunities", authRequired, loadUser, opportunityRoutes);
+  app.use("/api/reports", authRequired, loadUser, reportRoutes);
   app.use("/api/interactions", authRequired, loadUser, interactionRoutes);
   app.use(
     "/api/execution-commercial",

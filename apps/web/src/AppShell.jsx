@@ -10,6 +10,8 @@ import {
 import Dashboard from "./Dashboard";
 import DashboardHomePage from "./DashboardHomePage";
 import DashboardsPage from "./DashboardsPage";
+import ReportsPage from "./ReportsPage";
+import { QUOTATION_READ_PERMISSIONS } from "../../../shared/quotation-permissions.js";
 import { confirmQuotationNavigation } from "./quotations/quotationNavigationGuard";
 import { api } from "./api";
 import { HelpDrawer, HelpTourCoach } from "./help/HelpWidgets";
@@ -49,6 +51,7 @@ const ManufacturerRegistrationsPage = lazy(
   () => import("./ManufacturerRegistrationsPage"),
 );
 const ContactsPage = lazy(() => import("./ContactsPage"));
+const OpportunitiesQuotationsReportPage = lazy(() => import("./OpportunitiesQuotationsReportPage"));
 const ContactMappingPage = lazy(() => import("./ContactMappingPage"));
 const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
@@ -268,6 +271,8 @@ export default function AppShell({
   const canReadContacts = can("contactos.read") || can("contactos.read_all");
   const canReadOpportunities =
     can("oportunidades.read") || can("oportunidades.read_all");
+  const canReadOpportunitiesQuotationsReport =
+    canReadOpportunities && QUOTATION_READ_PERMISSIONS.some(can);
   const canAccessCommercialDevelopment =
     (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
     canReadOpportunities;
@@ -355,6 +360,14 @@ export default function AppShell({
               canAccessInteractions={canAccessInteractions}
             />
           }
+        />
+        <Route
+          path="/reports"
+          element={<ReportsPage canReadReport={canReadOpportunitiesQuotationsReport} />}
+        />
+        <Route
+          path="/reports/opportunities-quotations"
+          element={<OpportunitiesQuotationsReportPage canReadReport={canReadOpportunitiesQuotationsReport} />}
         />
         <Route
           path="/dashboards/cuota-mensual"
@@ -812,6 +825,9 @@ export default function AppShell({
                   Indicadores
                 </GuardedNavLink>
               ) : null}
+              <GuardedNavLink to="/reports" onBeforeNavigate={confirmRouteChange}>
+                Reportes
+              </GuardedNavLink>
               {canAccessCommercialCalendar && (
                 <GuardedNavLink to="/calendar" onBeforeNavigate={confirmRouteChange}>
                   Agenda

@@ -1,0 +1,270 @@
+import express from "express";
+import mysql from "mysql2/promise";
+import request from "supertest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/db.js", () => {
+  const query = vi.fn();
+  return {
+    query,
+    withTransaction: (work) => work({ query: async (...args) => [await query(...args)] }),
+  };
+});
+
+import { config } from "../src/config.js";
+import { query } from "../src/db.js";
+import reportRoutes from "../src/routes.reports.js";
+import {
+  getReportCatalogs,
+  listOpportunitiesQuotationsReport,
+  reportFiltersSchema,
+} from "../src/reports/opportunities-quotations.js";
+
+let connection;
+let fixtureTableNames = [];
+let fixtureCtes = [];
+async function refreshFixtures() {
+  fixtureCtes = [];
+  for (const name of fixtureTableNames) {
+    const [rows] = await connection.query(`SELECT * FROM ${name}`);
+    const selects = rows.map((row) => `SELECT ${Object.entries(row)
+      .map(([column, value]) => `${connection.escape(value)} AS \`${column}\``).join(", ")}`);
+    fixtureCtes.push(`${name} AS (${selects.join(" UNION ALL ")})`);
+  }
+}
+const user = (permissions = ["oportunidades.read", "cotizaciones.operacion"]) => ({
+  id: 19, permissionSet: new Set(permissions),
+});
+const report = (filters = {}, currentUser = user()) =>
+  listOpportunitiesQuotationsReport(currentUser, reportFiltersSchema.parse(filters));
+
+beforeAll(async () => {
+  connection = await mysql.createConnection(config.db);
+  await connection.query("SET SESSION max_execution_time = 2000");
+  // Temporary fixtures shadow real tables and disappear with this connection.
+  const tables = {
+    accounts: "id INT PRIMARY KEY, name VARCHAR(100)",
+    users: "id INT PRIMARY KEY, full_name VARCHAR(100)",
+    account_owners: "account_id INT, user_id INT",
+    opportunity_sales_stages: "id INT PRIMARY KEY, name VARCHAR(100)",
+    opportunity_commercial_statuses: "id INT PRIMARY KEY, code VARCHAR(30), name VARCHAR(100)",
+    opportunity_activation_statuses: "id INT PRIMARY KEY, code VARCHAR(30), name VARCHAR(100)",
+    quotation_statuses: "id INT PRIMARY KEY, code VARCHAR(30), name VARCHAR(100)",
+    quotation_activation_statuses: "id INT PRIMARY KEY, code VARCHAR(30), name VARCHAR(100)",
+    opportunities: `id INT PRIMARY KEY, name VARCHAR(100), account_id INT,
+      amount_usd DECIMAL(12,2), close_date DATE, commercial_closed_at DATETIME,
+      seller_user_id INT, presales_user_id INT, sales_stage_id INT,
+      commercial_status_id INT, activation_status_id INT`,
+    quotations: "id INT PRIMARY KEY, opportunity_id INT, latest_version_id INT, activation_status_id INT",
+    quotation_versions: `id INT PRIMARY KEY, quotation_id INT, version_number INT,
+      proposal_name VARCHAR(100), quotation_date DATE, currency_code VARCHAR(10), exchange_rate DECIMAL(15,4),
+      status_id INT, summary_discount_mode VARCHAR(30), summary_discount_value DECIMAL(12,2),
+      summary_distribution_mode VARCHAR(30), summary_vat_mode VARCHAR(30), summary_vat_pct DECIMAL(6,2)`,
+    quotation_sections: "id INT PRIMARY KEY, quotation_version_id INT",
+    quotation_section_items: `id INT PRIMARY KEY, quotation_section_id INT, quantity DECIMAL(12,2),
+      list_price_unit DECIMAL(12,2), manufacturer_discount_pct DECIMAL(6,2),
+      import_cost_pct DECIMAL(6,2), profit_margin_pct DECIMAL(6,2),
+      final_discount_pct DECIMAL(6,2), item_type VARCHAR(30), bundle_parent_item_id INT`,
+  };
+  for (const [name, columns] of Object.entries(tables)) {
+    await connection.query(`CREATE TEMPORARY TABLE ${name} (${columns})`);
+  }
+  await connection.query("INSERT INTO accounts VALUES (1, 'Visible'), (2, 'Ajena')");
+  await connection.query("INSERT INTO users VALUES (19, 'Vendedor'), (20, 'Preventa')");
+  await connection.query("INSERT INTO account_owners VALUES (1, 19)");
+  await connection.query("INSERT INTO opportunity_sales_stages VALUES (1, 'Waiting')");
+  await connection.query("INSERT INTO opportunity_commercial_statuses VALUES (1, 'en_proceso', 'En proceso'), (2, 'ganada', 'Ganada')");
+  await connection.query("INSERT INTO opportunity_activation_statuses VALUES (1, 'activada', 'Activada'), (2, 'desactivada', 'Desactivada')");
+  await connection.query("INSERT INTO quotation_statuses VALUES (1, 'aceptada', 'Aceptada'), (2, 'ganada', 'Ganada'), (3, 'borrador', 'Borrador')");
+  await connection.query("INSERT INTO quotation_activation_statuses VALUES (1, 'activada', 'Activada'), (2, 'desactivada', 'Desactivada')");
+  for (let id = 1; id <= 6; id += 1) {
+    await connection.query(`INSERT INTO opportunities VALUES
+      (?, ?, ?, ?, '2026-11-15', ?, 19, 20, 1, ?, 1)`, [
+      id, `Oportunidad ${id}`, id === 6 ? 2 : 1, id * 100,
+      [1, 3, 4, 6].includes(id) ? "2026-11-03 23:59:59" : null,
+      [1, 3, 4, 6].includes(id) ? 2 : 1,
+    ]);
+  }
+  const quotations = [
+    [201, 2, 2011, 1, 1, "MXN", 200],
+    [301, 3, 3011, 1, 1, "USD", 100],
+    [302, 3, 3021, 2, 3, "USD", 50],
+    [401, 4, 4011, 1, 2, "USD", 100],
+    [501, 5, 5012, 1, 3, "USD", 100],
+    [601, 6, 6011, 1, 1, "USD", 100],
+  ];
+  for (const [id, opportunityId, versionId, activation, status, currency, amount] of quotations) {
+    await connection.query("INSERT INTO quotations VALUES (?, ?, ?, ?)", [id, opportunityId, versionId, activation]);
+    await connection.query(`INSERT INTO quotation_versions VALUES
+      (?, ?, ?, ?, '2026-11-02', ?, ?, ?, 'percentage', 10, 'total', 'total', 16)`, [
+      versionId, id, id === 501 ? 2 : 1, `Cotización ${id}`, currency, currency === "MXN" ? 20 : 1, status,
+    ]);
+    await connection.query("INSERT INTO quotation_sections VALUES (?, ?)", [versionId, versionId]);
+    await connection.query("INSERT INTO quotation_section_items VALUES (?, ?, 1, ?, 0, 0, 0, 0, 'producto', NULL)", [versionId, versionId, amount]);
+  }
+  await connection.query(`INSERT INTO quotation_versions VALUES
+    (5011, 501, 1, 'Histórica aceptada', '2026-10-01', 'USD', 1, 1, 'percentage', 0, 'total', 'total', 16)`);
+  // CTE fixtures allow repeated references, which MySQL temporary tables cannot support.
+  fixtureTableNames = Object.keys(tables);
+  await refreshFixtures();
+  query.mockImplementation(async (sql, params) => {
+    const [rows] = await connection.query(sql.replace("WITH scoped_opportunities AS",
+      `WITH ${fixtureCtes.join(", ")}, scoped_opportunities AS`), params);
+    return rows;
+  });
+}, 30000);
+
+afterAll(async () => { await connection?.end(); });
+
+describe("Opportunity and quotation report", () => {
+  it.each([
+    ["all", [5, 4, 3, 2, 1]],
+    ["won", [4, 3, 1]],
+    ["accepted", [3, 2]],
+    ["both", [3]],
+    ["either", [4, 3, 2, 1]],
+    ["won_without_accepted", [4, 1]],
+    ["accepted_not_won", [2]],
+  ])("selects %s without duplicate opportunities", async (preset, ids) => {
+    const result = await report({ preset });
+    expect(result.items.map((item) => item.id)).toEqual(ids);
+    expect(result.total).toBe(ids.length);
+  });
+
+  it("uses only the current version and keeps won quotations distinct from accepted", async () => {
+    const result = await report();
+    expect(result.summary).toMatchObject({
+      opportunityCount: 5, wonCount: 3, opportunityAmountUsd: 1500,
+      quotationCount: 5, acceptedCount: 2,
+    });
+    expect(result.items.find((item) => item.id === 5).quotations[0]).toMatchObject({
+      id: 501, versionNumber: 2, statusCode: "borrador",
+    });
+    expect((await report({ quotationStatuses: "ganada" })).items.map((item) => item.id)).toEqual([4]);
+    expect((await report({ quotationPresence: "without" })).items.map((item) => item.id)).toEqual([1]);
+  });
+
+  it("returns context quotations and highlights only matching quotations", async () => {
+    const result = await report({ preset: "both" });
+    expect(result.items[0].quotations).toEqual([
+      expect.objectContaining({ id: 302, matchesFilters: false }),
+      expect.objectContaining({ id: 301, matchesFilters: true }),
+    ]);
+    expect(result.summary).toMatchObject({ quotationCount: 2, acceptedCount: 1, matchingCount: 1 });
+    expect(result.summary.currencies[0].amount).toBeCloseTo(156.6);
+    expect(result.summary.currencies[0].matchingAmount).toBeCloseTo(104.4);
+    expect((await report({ preset: "both", quotationStatuses: "borrador" })).total).toBe(0);
+  });
+
+  it("separates currency totals, applies the existing discount and VAT formula, and paginates opportunities", async () => {
+    const result = await report();
+    expect(result.summary.currencies.map((item) => item.currency)).toEqual(["MXN", "USD"]);
+    expect(result.summary.currencies[0].amount).toBeCloseTo(208.8);
+    expect(result.summary.currencies[0].matchingAmount).toBeCloseTo(208.8);
+    expect(result.summary.currencies[1].amount).toBeCloseTo(365.4);
+    expect(result.items.find((item) => item.id === 2).quotations[0]).toMatchObject({
+      currency: "MXN", exchangeRate: 20,
+    });
+    const emptyPage = await report({ page: 100, sort: "name", direction: "asc" });
+    expect(emptyPage.page).toBe(1);
+    expect(emptyPage.items.map((item) => item.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("paginates opportunities while keeping full-result totals", async () => {
+    try {
+      const [[template]] = await connection.query("SELECT * FROM opportunities WHERE id = 1");
+      for (let id = 100; id <= 105; id += 1) {
+        await connection.query("INSERT INTO opportunities SET ?", { ...template, id });
+      }
+      await refreshFixtures();
+      const first = await report();
+      const second = await report({ page: 2 });
+      expect(first.items).toHaveLength(10);
+      expect(second.items.map((item) => item.id)).toEqual([1]);
+      expect(first.total).toBe(11);
+      expect(second.summary).toEqual(first.summary);
+      expect(second.summary.opportunityAmountUsd).toBe(2100);
+    } finally {
+      await connection.query("DELETE FROM opportunities WHERE id BETWEEN 100 AND 105");
+      await refreshFixtures();
+    }
+  });
+
+  it("counts bundle children instead of their parent and excludes grouping items", async () => {
+    try {
+      await connection.query("UPDATE quotation_section_items SET list_price_unit = 999 WHERE id = 3011");
+      await connection.query(`INSERT INTO quotation_section_items VALUES
+        (90001, 3011, 1, 100, 0, 0, 0, 0, 'producto', 3011),
+        (90002, 3011, 1, 500, 0, 0, 0, 0, 'grupo_productos', NULL)`);
+      await refreshFixtures();
+      const result = await report({ preset: "both" });
+      expect(result.items[0].quotations.find((item) => item.id === 301).totalAmount).toBeCloseTo(104.4);
+    } finally {
+      await connection.query("DELETE FROM quotation_section_items WHERE id IN (90001, 90002)");
+      await connection.query("UPDATE quotation_section_items SET list_price_unit = 100 WHERE id = 3011");
+      await refreshFixtures();
+    }
+  });
+
+  it("combines dates, activation, responsibilities and multi-state filters", async () => {
+    expect((await report({
+      dateType: "actual_close", dateFrom: "2026-11-03", dateTo: "2026-11-03",
+      accountId: 1, sellerUserId: 19, presalesUserId: 20,
+      commercialStatuses: "ganada", quotationStatuses: "aceptada,ganada",
+    })).items.map((item) => item.id)).toEqual([4, 3]);
+    expect((await report({
+      dateType: "quotation", dateFrom: "2026-10-01", dateTo: "2026-10-01",
+    })).total).toBe(0);
+    const active = await report({ quotationActivation: "activada", search: "Oportunidad 3" });
+    expect(active.items[0].quotations.map((item) => item.id)).toEqual([301]);
+    expect((await report({ opportunityActivation: "desactivada" })).total).toBe(0);
+    expect((await report({ dateFrom: "2026-12-01" })).total).toBe(0);
+  });
+
+  it.each([
+    ["oportunidades.read_all", "cotizaciones.operacion"],
+    ["oportunidades.read", "cotizaciones.administracion"],
+  ])("intersects both account scopes: %s", async (...permissions) => {
+    const result = await report({}, user(permissions));
+    expect(result.total).toBe(5);
+    expect(result.summary.opportunityAmountUsd).toBe(1500);
+    expect((await getReportCatalogs(user(permissions))).accounts).toEqual([{ id: 1, name: "Visible" }]);
+  });
+
+  it("only grants global scope when both modules allow it", async () => {
+    expect((await report({}, user(["oportunidades.read_all", "cotizaciones.administracion"]))).total).toBe(6);
+  });
+
+  it.each([
+    { dateFrom: "2026-11-30", dateTo: "2026-11-01" },
+    { dateFrom: "2026-02-30" }, { page: 0 }, { pageSize: 1000 },
+    { sort: "id; DROP TABLE opportunities" }, { accountId: "invalid" },
+    { quotationStatuses: "not_a_state" }, { unsupported: "value" },
+  ])("rejects malformed filters %j", (filters) => {
+    expect(reportFiltersSchema.safeParse(filters).success).toBe(false);
+  });
+});
+
+describe("Report HTTP access and validation", () => {
+  const appFor = (currentUser) => {
+    const app = express();
+    app.use((req, _res, next) => { req.user = currentUser; next(); });
+    app.use("/api/reports", reportRoutes);
+    return app;
+  };
+  it.each([
+    [], ["oportunidades.read"], ["cotizaciones.operacion"],
+    ["oportunidades.read", "aceptar_pedido.procesamiento.read"],
+  ].map((permissions) => ({ permissions })))("denies incomplete permissions $permissions", async ({ permissions }) => {
+    const app = appFor(user(permissions));
+    expect((await request(app).get("/api/reports/opportunities-quotations")).status).toBe(403);
+    expect((await request(app).get("/api/reports/opportunities-quotations/catalogs")).status).toBe(403);
+  });
+  it("returns 400 for invalid filters and the expected response shape for valid requests", async () => {
+    const app = appFor(user());
+    expect((await request(app).get("/api/reports/opportunities-quotations?page=-1")).status).toBe(400);
+    const response = await request(app).get("/api/reports/opportunities-quotations?preset=both");
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ total: 1, page: 1, pageSize: 10, summary: { opportunityCount: 1 } });
+  });
+});
