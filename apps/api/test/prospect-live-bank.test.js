@@ -5,7 +5,7 @@ import {
 import {
   buildProspectJudgeFields, describeSessionForJudge, gradeProspectTurn, judgeProspectTurn, validateProspectJudgement,
 } from "../src/channel-quality/live/prospect-judge.js";
-import { prospectBank, runProspectBank, runProspectScenario, summarizeProspectRun, validateBank } from "../src/channel-quality/live/prospect-live.js";
+import { prospectBank, resolveBankSessions, runProspectBank, runProspectScenario, summarizeProspectRun, validateBank } from "../src/channel-quality/live/prospect-live.js";
 
 const turn = {
   id: "t1", question: "¿Qué contactos hay?", operations: "none", checks: {},
@@ -14,12 +14,25 @@ const turn = {
 };
 
 describe("banco de evaluación de Cuenta nueva", () => {
-  it("tiene 36 escenarios íntegros; los críticos son del 12 al 21 y el 26 y el 32", () => {
+  it("tiene 43 escenarios íntegros; los críticos son del 12 al 21 y el 26, 32, 37 y 39", () => {
     expect(validateBank()).toEqual([]);
-    expect(prospectBank.scenarios).toHaveLength(36);
+    expect(prospectBank.scenarios).toHaveLength(43);
     expect(prospectBank.scenarios.filter((item) => item.critical).map((item) => item.id))
-      .toEqual(["S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S21", "S26", "S32"]);
-    expect([...new Set(prospectBank.scenarios.map((item) => item.area))]).toEqual(["A", "B", "C", "D", "E", "F"]);
+      .toEqual(["S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S21", "S26", "S32", "S37", "S39"]);
+    expect([...new Set(prospectBank.scenarios.map((item) => item.area))]).toEqual(["A", "B", "C", "D", "E", "F", "G"]);
+  });
+
+  it("resuelve las sesiones que extienden a otra sin modificar la original", () => {
+    const sessions = resolveBankSessions();
+    expect(sessions.rica_crm.companyName).toBe("Aceros del Norte");
+    expect(sessions.rica_crm.contacts).toEqual(prospectBank.sessions.rica.contacts);
+    expect(sessions.rica_crm.crm.similarCustomers.customers).toHaveLength(2);
+    expect(prospectBank.sessions.rica.crm).toBeUndefined();
+    expect(sessions.rica_sin_biblioteca.libraryDenied).toBe(true);
+    expect(sessions.duplicado_con_responsable.crm.duplicateCandidates[0].owners).toEqual(["Ana Pérez"]);
+    expect(validateBank({ ...prospectBank, sessions: { ...prospectBank.sessions, x: { extends: "nada" } } }))
+      .toEqual(expect.arrayContaining([expect.stringContaining("extiende una sesión inexistente")]));
+    expect(() => resolveBankSessions({ sessions: { a: { extends: "b" }, b: { extends: "a" } } })).toThrow(/círculo/);
   });
 
   it("detecta ediciones que debilitan el banco", () => {
@@ -164,11 +177,11 @@ describe("ejecución del banco", () => {
 
   it("resume casos, críticos, afirmaciones y áreas, con el detalle de lo que falló", async () => {
     const run = await runProspectBank({ user: { id: 1 }, judgeModel: "m", createAdapter: adapterWith({}), judge: goodJudge, concurrency: 4 });
-    expect(run.scenarios).toHaveLength(36);
+    expect(run.scenarios).toHaveLength(43);
     // Operations are absent in every scenario, so everything passes except those whose deterministic checks cannot pass.
-    expect(run.groups.cases.total).toBe(36);
-    expect(run.groups.critical.total).toBe(12);
-    expect(Object.keys(run.groups)).toEqual(["cases", "critical", "content", "operations", "claims", "area_a", "area_b", "area_c", "area_d", "area_e", "area_f"]);
+    expect(run.groups.cases.total).toBe(43);
+    expect(run.groups.critical.total).toBe(14);
+    expect(Object.keys(run.groups)).toEqual(["cases", "critical", "content", "operations", "claims", "area_a", "area_b", "area_c", "area_d", "area_e", "area_f", "area_g"]);
     expect(summarizeProspectRun(run.scenarios).groups.claims.total).toBe(run.groups.claims.total);
   });
 });

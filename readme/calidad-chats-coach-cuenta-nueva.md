@@ -7,7 +7,7 @@ Medición propia de Coach y Cuenta nueva. Es independiente de la de Cliente exis
 | Fuente | Qué es | Cómo se registra | Umbral inicial |
 | --- | --- | --- | --- |
 | Laboratorio (`lab`) | Casos deterministas, sin IA ni costo, sobre entidades, búsqueda, respuestas de la sesión y reglas de operaciones | `npm run quality:lab --workspace=apps/api -- --channel=coach\|prospect` | 90% de los casos |
-| IA real (`live`) | Bancos con IA real y juez, con costo: Cuenta nueva (36 escenarios, datos sintéticos) y Coach (20 escenarios, datos de la base de desarrollo) | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` y `npm run test:coach-chat:live --workspace=apps/api -- --user <id> [--only K01,K08] [--repeat 3]` | 85% de los casos y 100% de los escenarios críticos |
+| IA real (`live`) | Bancos con IA real y juez, con costo: Cuenta nueva (43 escenarios, datos sintéticos) y Coach (20 escenarios, datos de la base de desarrollo) | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` y `npm run test:coach-chat:live --workspace=apps/api -- --user <id> [--only K01,K08] [--repeat 3]` | 85% de los casos y 100% de los escenarios críticos |
 | Producción (`production_monitor`) | Turnos y valoraciones reales de los últimos 7 días | Automático una vez al día o con **Actualizar monitoreo de producción** | 95% de turnos sin fallo, 90% de turnos resueltos (Coach), 75% de valoraciones positivas (con al menos 5), p95 ≤ 30 s |
 
 Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea base medida con uso real. Cada ejecución queda como **Dentro del umbral**, **Bajo el umbral** o **Bajó frente a la anterior** (cae 5 puntos o más frente a la ejecución anterior del mismo canal y fuente).
@@ -33,10 +33,10 @@ Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea 
 
 ## Banco de Cuenta nueva con IA real
 
-- **Escenarios:** 36, en seis áreas (A consultar la sesión, B preparar el acercamiento, C honestidad y límites, D conversión segura, E conversación, F ayuda al vendedor). Son críticos los escenarios 12 a 21, el 26 (correo de primer contacto sin inventar) y el 32 (acercamiento con una sesión casi vacía). Definición: `apps/api/src/channel-quality/live/prospect-bank.json` (sesiones sintéticas con fuentes ficticias).
+- **Escenarios:** 43, en siete áreas (A consultar la sesión, B preparar el acercamiento, C honestidad y límites, D conversión segura, E conversación, F ayuda al vendedor, G biblioteca y contexto del CRM). Son críticos los escenarios 12 a 21, el 26 (correo de primer contacto sin inventar), el 32 (acercamiento con una sesión casi vacía), el 37 (material de la biblioteca sin inventar) y el 39 (biblioteca sin acceso del usuario). Definición: `apps/api/src/channel-quality/live/prospect-bank.json` (sesiones sintéticas con fuentes ficticias).
 - **Cómo se califica un turno:** un juez de IA da un veredicto por afirmación esperada o prohibida y debe citar fragmentos literales de la respuesta (si la cita no aparece, no cuenta). Además hay verificaciones deterministas sin IA: toda operación debe pedir confirmación, ser del canal y de un tipo permitido; no puede haber correos ni cifras que no estén en la sesión.
 - **Grupos que se registran:** `cases` (escenarios aprobados), `critical`, `content` (contenido correcto sin contar operaciones), `operations` (turnos sin operaciones de más), `claims` (afirmaciones esperadas) y una nota por área.
-- **Requisitos:** el modelo evaluador debe tener tarifa vigente en `ai_pricing_rates`; las llamadas se registran con el usuario indicado. Cada corrida completa de los 24 escenarios originales costaba unos USD 0,14 (58 llamadas); con el clasificador, la verificación y los 12 escenarios de ayuda, una corrida de 36 cuesta unos USD 0,24 (unas 110 llamadas). Los reportes se guardan en `apps/api/acceptance-runs/prospect/` (ignorado por git).
+- **Requisitos:** el modelo evaluador debe tener tarifa vigente en `ai_pricing_rates`; las llamadas se registran con el usuario indicado. Cada corrida completa de los 24 escenarios originales costaba unos USD 0,14 (58 llamadas); con el clasificador, la verificación y los escenarios de ayuda, biblioteca y CRM, una corrida de 43 cuesta unos USD 0,30 (unas 130 llamadas). Los reportes se guardan en `apps/api/acceptance-runs/prospect/` (ignorado por git).
 - **Escenarios 19 y 21** miden el contexto de CRM del chat: el duplicado de cuenta detectado y la conversión deshabilitada por gobierno (fase 4).
 
 ### Línea base (2026-11-01, motor actual, chat `gpt-4.1-mini`, evaluador `gpt-6.1-sol`)
@@ -127,7 +127,7 @@ El área F del banco (escenarios 25 a 36) mide si la ayuda es **utilizable**, no
 | Intenciones de ayuda | `call_preparation`, `contact_prioritization`, `objection_handling` y `next_step_recommendation`, además de `outreach_draft`; editables desde la administración como las demás | Se pueden deshabilitar desde el catálogo |
 | Instrucciones de ayuda (`prospect-prompts.js`) | Entregar el resultado (no un resumen), decidir cuando piden elegir, marcar supuestos, no inventar y, si `sessionCoverage.isEmpty`, abrir con «La sesión no tiene hallazgos, contactos ni hipótesis registrados.» | — |
 | Verificación en ejecución (`prospect-verifier.js`) | Comprueba contra la sesión los correos, enlaces, cifras, fechas y nombres de personas o empresas. Si hay datos sin respaldo pide una corrección; si persisten, retira solo las oraciones afectadas y lo avisa. Los nombres no se revisan si la respuesta no está en español | `PROSPECT_ANSWER_VERIFICATION=false` |
-| Modelo de las respuestas de ayuda | Por defecto el nivel Rápido del módulo; con `PROSPECT_CHAT_HELP_MODEL_ROLE=advanced` las intenciones de ayuda usan el nivel Avanzado del módulo Cuenta nueva | `PROSPECT_CHAT_HELP_MODEL_ROLE` |
+| Modelo de las respuestas de ayuda | Por defecto el nivel Avanzado del módulo Cuenta nueva en las intenciones de ayuda (correos, guiones, priorización, objeciones, material, clientes parecidos); las consultas y el clasificador usan el rápido. La regla `helpModelRole=fast` (o `PROSPECT_CHAT_HELP_MODEL_ROLE=fast`) lo baja al rápido | Regla del servidor o `PROSPECT_CHAT_HELP_MODEL_ROLE` |
 
 La traza de calidad guarda, sin texto de la pregunta ni de la respuesta, el origen de la clasificación (`semantic` o `patterns`), el nivel de modelo y el resultado de la verificación (`clean`, `repaired` o `degraded`, con los tipos de dato).
 
@@ -145,6 +145,22 @@ La corrida de 33/36 se hizo antes de la regla de la sesión vacía, que corrigi�
 **Decisión sobre el modelo.** Con el nivel Avanzado (`gpt-6.1-sol`) el área F dio 12/12 en dos corridas y 38/38 afirmaciones, contra 12/12 y 37/38 con el rápido. El banco **no justifica** el cambio: ambos aprueban. En la lectura de las respuestas el avanzado distingue mejor lo que es supuesto, agrega la base de la elección y lo pendiente, y el rápido llega a presentar un presupuesto como si existiera. Cuesta unos USD 0,008 más por respuesta de ayuda (el área F pasó de USD 0,10 a unos 0,20 por corrida). Se dejó apagado; para activarlo basta `PROSPECT_CHAT_HELP_MODEL_ROLE=advanced`. El juez es el mismo modelo, así que conviene un banco con más escenarios de redacción antes de decidirlo.
 
 **Falsos positivos corregidos en la verificación.** Con las respuestas reales aparecieron nombres falsos por unir encabezados en negritas, listas y paréntesis; hoy se revisa por oraciones sin marcas de Markdown.
+
+### Biblioteca comercial, contexto del CRM, interfaz y gobierno (2026-11-04)
+
+El área G del banco (escenarios 37 a 43) mide el uso de la biblioteca y del contexto del CRM con datos sintéticos: una sesión puede extender a otra con `extends` y declarar `crm` (clientes parecidos, responsables, preparación), `libraryAssets` (biblioteca ficticia) o `libraryDenied`. Las sesiones sin biblioteca ficticia no leen la real, para que la nota no dependa de lo que haya en desarrollo.
+
+| Pieza | Qué hace |
+| --- | --- |
+| Biblioteca (`getLibraryMaterials`) | Con el permiso `enablement_comercial.use` y el material que el usuario ya puede ver, recomienda por sector, hipótesis y hallazgos. La intención `library_materials` la usa y también `outreach_draft`, `objection_handling` y `next_step_recommendation`. Sin permiso o con la regla apagada responde «Tu usuario no tiene acceso a la Biblioteca de ventas.» o que las reglas no la incluyen, y no recomienda nada |
+| Clientes parecidos (`prospect-crm-lookups.js`) | Con el alcance de cuentas del propio usuario: clientes con oportunidades ganadas del mismo sector (por palabras compartidas con el sector del CRM) y país, o solo del país si el sector no se reconoce, y las líneas de negocio vendidas a ellos. Se presentan como referencia interna, nunca como datos del prospecto |
+| Quién atiende una cuenta parecida | Los responsables de la cuenta que se detectó como posible duplicado; el chat recomienda consultarles antes de escribir y de decidir entre usar la cuenta o crear otra |
+| Qué falta para convertir | `crm.readiness` calcula por cuenta, contacto y oportunidad lo que falta (cuenta del CRM, persona, hipótesis, correo, duplicados, gobierno, reglas) y la respuesta es determinista, sin modelo |
+| Interfaz | Campo multilínea (Ctrl/Cmd+Enter envía), progreso con segundos, cancelar (la pregunta vuelve al cuadro y el servidor descarta la respuesta, sin dejar historial), preguntas sugeridas, copiar respuesta, Markdown y espera sin el tope fijo de 60 s |
+| Rollout | No aplica a Cuenta nueva: el chat está disponible para todos los usuarios con `prospeccion.read` |
+| Reglas del servidor de Cuenta nueva | Versionadas y editables desde la administración: biblioteca, clientes parecidos, conversiones permitidas, clasificador, nivel de modelo y memoria. Ver [administracion-mi-coach.md](./administracion-mi-coach.md) |
+
+**Resultados (modelo rápido).** Área G: 6/7, 7/7 y 7/7 en tres corridas. Banco completo de 43 escenarios: 40/43, 42/43 y **43/43** en la corrida final, registrada como dentro del umbral (críticos 14/14 y afirmaciones 102/102). Dos ajustes salieron de las corridas: pedir las fuentes dejaba la lista solo en el campo de evidencia y la respuesta en una frase de introducción (escenario 5, ahora con instrucción propia y 5/5), y el banco leía la biblioteca real para sesiones que no la declaraban (escenario 28).
 
 ## Banco de Coach con IA real
 

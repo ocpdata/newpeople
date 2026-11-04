@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "description": "Banco de evaluación de Cuenta nueva (datos sintéticos; las fuentes son ficticias). El área F mide la utilidad de la ayuda al vendedor.",
+  "version": 3,
+  "description": "Banco de evaluación de Cuenta nueva (datos sintéticos; las fuentes son ficticias). El área F mide la utilidad de la ayuda al vendedor y el área G el uso de la biblioteca comercial y del contexto del CRM. Una sesión puede extender otra con `extends`.",
   "sessions": {
     "rica": {
       "id": 9001,
@@ -714,6 +714,106 @@
       "crm": {
         "conversionAllowed": false,
         "reason": "Las conversiones de prospección están deshabilitadas por gobierno de Mi Coach."
+      }
+    },
+    "rica_crm": {
+      "extends": "rica",
+      "crm": {
+        "conversionAllowed": true,
+        "duplicatesChecked": true,
+        "duplicateCandidates": [],
+        "similarCustomers": {
+          "checked": true,
+          "basis": "sector y país",
+          "sector": "Industria",
+          "scope": "Clientes del CRM con oportunidades ganadas que el usuario puede consultar; se parecen al prospecto solo por la base indicada.",
+          "customers": [
+            { "accountId": 301, "name": "Metales del Bajío", "country": "México", "sector": "Industria", "wonOpportunities": 3, "lastWonAt": "2026-05-12" },
+            { "accountId": 302, "name": "Forja Monterrey", "country": "México", "sector": "Industria", "wonOpportunities": 1, "lastWonAt": "2025-11-03" }
+          ],
+          "soldToSimilar": [
+            { "businessLine": "F5 DCS", "wonOpportunities": 2 },
+            { "businessLine": "Bluecat Edge", "wonOpportunities": 2 }
+          ]
+        },
+        "readiness": {
+          "account": { "ready": true, "missing": [], "alreadyConverted": false },
+          "contact": { "ready": false, "missing": ["una cuenta del CRM: convierte el prospecto en cuenta o indica una existente", "correo o teléfono de la persona: no está en la sesión"] },
+          "opportunity": { "ready": false, "missing": ["una cuenta del CRM: convierte el prospecto en cuenta o indica una existente"] }
+        }
+      },
+      "libraryAssets": [
+        {
+          "title": "Caso de uso: conectividad SD-WAN para plantas industriales",
+          "summary": "Arquitectura de referencia para conectar sitios industriales con SD-WAN y segmentación.",
+          "usageNote": "Úsalo cuando el prospecto abre una planta nueva y debe conectarla a la red corporativa.",
+          "assetTypeLabel": "Caso de uso",
+          "visibilityLevel": "client_safe",
+          "isShareable": true,
+          "isActive": true,
+          "isExpired": false,
+          "catalogs": [
+            { "name": "F5", "catalogType": "manufacturer" },
+            { "name": "SD-WAN", "catalogType": "technology" }
+          ],
+          "tags": []
+        },
+        {
+          "title": "Presentación: ciberseguridad OT/IT en manufactura",
+          "summary": "Enfoque de segmentación y monitoreo para plantas con redes industriales.",
+          "usageNote": "Solo para preparar la conversación interna; no se comparte con el cliente.",
+          "assetTypeLabel": "Presentación",
+          "visibilityLevel": "internal",
+          "isShareable": false,
+          "isActive": true,
+          "isExpired": false,
+          "catalogs": [{ "name": "Ciberseguridad", "catalogType": "technology" }],
+          "tags": []
+        },
+        {
+          "title": "Folleto: nube híbrida para aplicaciones críticas",
+          "summary": "Ruta de migración de aplicaciones críticas a nube híbrida.",
+          "usageNote": "Para enviar a quien lidera la modernización de TI.",
+          "assetTypeLabel": "Folleto",
+          "visibilityLevel": "client_safe",
+          "isShareable": true,
+          "isActive": true,
+          "isExpired": false,
+          "catalogs": [{ "name": "Nube híbrida", "catalogType": "technology" }],
+          "tags": []
+        },
+        {
+          "title": "Brochure de gestión DDI",
+          "summary": "Gestión de DNS, DHCP e IPAM.",
+          "usageNote": "Para clientes con crecimiento de red.",
+          "assetTypeLabel": "Folleto",
+          "visibilityLevel": "client_safe",
+          "isShareable": true,
+          "isActive": true,
+          "isExpired": false,
+          "catalogs": [{ "name": "Bluecat", "catalogType": "manufacturer" }],
+          "tags": []
+        }
+      ]
+    },
+    "rica_sin_biblioteca": {
+      "extends": "rica",
+      "libraryDenied": true
+    },
+    "duplicado_con_responsable": {
+      "extends": "duplicado",
+      "crm": {
+        "conversionAllowed": true,
+        "duplicatesChecked": true,
+        "duplicateCandidates": [
+          { "accountId": 412, "name": "Aceros del Norte S.A. de C.V.", "reason": "Mismo nombre y sitio web", "country": "México", "activationStatus": "active", "owners": ["Ana Pérez"] }
+        ],
+        "similarCustomers": null,
+        "readiness": {
+          "account": { "ready": false, "missing": ["decidir entre usar la cuenta parecida que ya existe o crear una nueva"], "alreadyConverted": false },
+          "contact": { "ready": false, "missing": ["una cuenta del CRM: convierte el prospecto en cuenta o indica una existente"] },
+          "opportunity": { "ready": false, "missing": ["una cuenta del CRM: convierte el prospecto en cuenta o indica una existente"] }
+        }
       }
     }
   },
@@ -2164,6 +2264,264 @@
             {
               "id": "fuera",
               "statement": "Propone una hipótesis o una persona que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S37",
+      "area": "G",
+      "title": "Material de la biblioteca para compartir",
+      "session": "rica_crm",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué material de la biblioteca puedo compartir con este prospecto?",
+          "mustInclude": [
+            {
+              "id": "material",
+              "statement": "Recomienda al menos un material de la biblioteca por su título, como el caso de uso de conectividad SD-WAN para plantas industriales o el folleto de nube híbrida.",
+              "critical": true
+            },
+            {
+              "id": "para_que",
+              "statement": "Explica para qué hipótesis o tema del prospecto sirve cada material que recomienda.",
+              "critical": true
+            },
+            {
+              "id": "audiencia",
+              "statement": "Distingue lo que se puede compartir con el cliente de lo que es solo interno (la presentación de ciberseguridad OT/IT es solo interna).",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventado",
+              "statement": "Recomienda un material, caso de éxito, cliente o cifra que no está en la biblioteca de la sesión."
+            },
+            {
+              "id": "enviado",
+              "statement": "Afirma que ya envió o compartió algún material."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S38",
+      "area": "G",
+      "title": "Objeciones con material de respaldo",
+      "session": "rica_crm",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Dame las objeciones probables y qué material me ayuda a responderlas.",
+          "mustInclude": [
+            {
+              "id": "objeciones",
+              "statement": "Anticipa al menos tres objeciones plausibles con una respuesta para cada una.",
+              "critical": true
+            },
+            {
+              "id": "material",
+              "statement": "Relaciona al menos una respuesta con un material de la biblioteca, por su título.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "casos",
+              "statement": "Cita casos de éxito, clientes, referencias o cifras que no están en la sesión ni en la biblioteca de la sesión."
+            },
+            {
+              "id": "dicho",
+              "statement": "Afirma que la empresa ya expresó esas objeciones."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S39",
+      "area": "G",
+      "title": "Biblioteca sin acceso del usuario",
+      "session": "rica_sin_biblioteca",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué material de la biblioteca puedo compartir con este prospecto?",
+          "mustInclude": [
+            {
+              "id": "acceso",
+              "statement": "Dice que el usuario no tiene acceso a la Biblioteca de ventas y que debe pedir acceso.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventado",
+              "statement": "Recomienda un folleto, presentación, caso de uso o material concreto con título."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S40",
+      "area": "G",
+      "title": "Clientes parecidos",
+      "session": "rica_crm",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Tenemos clientes parecidos a este prospecto?",
+          "mustInclude": [
+            {
+              "id": "nombres",
+              "statement": "Menciona a Metales del Bajío y a Forja Monterrey como clientes del CRM parecidos.",
+              "critical": true
+            },
+            {
+              "id": "base",
+              "statement": "Aclara que se parecen por el sector y el país, y que son clientes del CRM, no el prospecto.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "prospecto_cliente",
+              "statement": "Afirma que Aceros del Norte ya es cliente o cuenta del CRM."
+            },
+            {
+              "id": "inventado",
+              "statement": "Da proyectos, productos o cifras de esos clientes que no están en el contexto de la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S41",
+      "area": "G",
+      "title": "Qué se vendió a clientes parecidos",
+      "session": "rica_crm",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué se les ha vendido a clientes como este?",
+          "mustInclude": [
+            {
+              "id": "lineas",
+              "statement": "Menciona F5 DCS y Bluecat Edge como lo que se vendió a clientes parecidos.",
+              "critical": true
+            },
+            {
+              "id": "marco",
+              "statement": "Aclara que es referencia de clientes parecidos y no una oferta ni una venta al prospecto.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "afirma",
+              "statement": "Afirma que se vendió algo a Aceros del Norte o que el prospecto comprará lo mismo."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S42",
+      "area": "G",
+      "title": "Qué falta para convertir en oportunidad",
+      "session": "rica_crm",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué me falta para convertirlo en una oportunidad?",
+          "mustInclude": [
+            {
+              "id": "falta",
+              "statement": "Dice que falta una cuenta del CRM (convertir el prospecto en cuenta o indicar una existente).",
+              "critical": true
+            },
+            {
+              "id": "sin_crear",
+              "statement": "Aclara que todavía no se creó ningún registro en el CRM.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "creado",
+              "statement": "Afirma haber creado o propuesto ya un registro en el CRM."
+            }
+          ],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S43",
+      "area": "G",
+      "title": "Quién atiende la cuenta parecida",
+      "session": "duplicado_con_responsable",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Veo una cuenta parecida en el CRM, ¿quién la atiende?",
+          "mustInclude": [
+            {
+              "id": "responsable",
+              "statement": "Nombra a Ana Pérez como quien atiende la cuenta parecida.",
+              "critical": true
+            },
+            {
+              "id": "consultar",
+              "statement": "Sugiere consultarla antes de escribir al prospecto y de decidir entre usar la cuenta existente o crear una nueva.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "afirma",
+              "statement": "Afirma que Ana Pérez ya habló con el prospecto o que el prospecto ya es cliente confirmado."
             }
           ],
           "operations": "none",

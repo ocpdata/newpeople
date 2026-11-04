@@ -8,6 +8,11 @@ import {
   saveCustomerServerRules,
 } from "./coach/customer-server-rules.js";
 import { serverRulesUpdateSchema } from "./coach/server-policy.js";
+import { prospectServerRulesUpdateSchema } from "./coach/prospect-server-policy.js";
+import {
+  getProspectServerRulesAdmin,
+  saveProspectServerRules,
+} from "./prospect-research/prospect-server-rules.js";
 import {
   createCoachAdminRule,
   deleteCoachAdminRule,
@@ -1187,6 +1192,44 @@ router.get(
 );
 
 router.put(
+  "/governance/server-rules/prospect",
+  requirePermission("mi_coach.admin"),
+  async (req, res) => {
+    const parsed = prospectServerRulesUpdateSchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Reglas del servidor inválidas", issues: parsed.error.issues,
+      });
+    }
+    try {
+      const saved = await saveProspectServerRules({ user: req.user, ...parsed.data });
+      await logAuditEvent({
+        req, module: "mi_coach", action: "mi_coach_server_rules_updated",
+        entityType: "mi_coach_business_rules", entityId: null,
+        detail: `Reglas de prospect/default: versión ${saved.version}`,
+        before: saved.before,
+        after: { ...saved.businessRules, serverRulesVersion: saved.version },
+      });
+      return res.json(await getProspectServerRulesAdmin());
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible guardar las reglas del servidor de Cuenta nueva");
+    }
+  },
+);
+
+router.get(
+  "/governance/server-rules/prospect",
+  requirePermission("mi_coach.admin"),
+  async (_req, res) => {
+    try {
+      return res.json(await getProspectServerRulesAdmin());
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cargar las reglas del servidor de Cuenta nueva");
+    }
+  },
+);
+
+router.put(
   "/governance/server-rules/customer_account",
   requirePermission("mi_coach.admin"),
   async (req, res) => {
@@ -1219,6 +1262,11 @@ router.put(
     if (req.body?.channel === "customer_account") {
       return res.status(409).json({
         message: "Cliente existente se administra en Reglas del servidor. Usa el endpoint versionado para evitar sobrescribir cambios concurrentes.",
+      });
+    }
+    if (req.body?.channel === "prospect") {
+      return res.status(409).json({
+        message: "Cuenta nueva se administra en Reglas del servidor. Usa el endpoint versionado para evitar sobrescribir cambios concurrentes.",
       });
     }
     const parsed = coachBusinessRulesSchema.safeParse(req.body || {});
@@ -1267,6 +1315,11 @@ router.delete(
     if (req.query?.channel === "customer_account") {
       return res.status(409).json({
         message: "Restaura Cliente existente desde Reglas del servidor y guarda una nueva versión. El historial no se elimina.",
+      });
+    }
+    if (req.query?.channel === "prospect") {
+      return res.status(409).json({
+        message: "Restaura Cuenta nueva desde Reglas del servidor y guarda una nueva versión. El historial no se elimina.",
       });
     }
     const parsed = z

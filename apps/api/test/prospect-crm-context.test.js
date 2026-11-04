@@ -17,11 +17,22 @@ describe("contexto CRM de Cuenta nueva", () => {
       duplicateReview: { completed: true, candidates: [{ id: 7, name: "Aceros", matchType: "domain", country: "México", activationStatus: "active", website: "x" }] },
       conversionAllowed: false,
     });
-    expect(crm).toEqual({
+    expect(crm).toMatchObject({
       conversionAllowed: false,
       duplicatesChecked: true,
-      duplicateCandidates: [{ accountId: 7, name: "Aceros", reason: "Mismo sitio web", country: "México", activationStatus: "active" }],
+      duplicateCandidates: [{ accountId: 7, name: "Aceros", reason: "Mismo sitio web", country: "México", activationStatus: "active", owners: [] }],
+      similarCustomers: null,
     });
+  });
+
+  it("agrega los responsables de la cuenta parecida y los clientes similares", () => {
+    const similar = { checked: true, basis: "país", customers: [], soldToSimilar: [] };
+    const crm = buildProspectCrmContext({
+      duplicateReview: { completed: true, candidates: [{ id: 7, name: "Aceros", matchType: "name_country" }] },
+      conversionAllowed: true, similar, owners: { 7: ["Ana Pérez"] },
+    });
+    expect(crm.duplicateCandidates[0].owners).toEqual(["Ana Pérez"]);
+    expect(crm.similarCustomers).toBe(similar);
   });
 
   it("no inventa candidatos cuando el usuario no puede leer cuentas", () => {

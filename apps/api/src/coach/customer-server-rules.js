@@ -130,7 +130,7 @@ export async function getCustomerServerRulesAdmin() {
     channels: [
       { channel, label: "Cliente existente", connected: true },
       { channel: "coach", label: "Coach", connected: false },
-      { channel: "prospect", label: "Cuenta nueva", connected: false },
+      { channel: "prospect", label: "Cuenta nueva", connected: true },
     ],
   };
 }

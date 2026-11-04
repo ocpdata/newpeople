@@ -5028,6 +5028,83 @@ describe("API integration baseline", () => {
       prospectSessionAfterSecondChatResponse.body.session.chatHistory,
     ).toHaveLength(4);
 
+    const prospectAuth = `Bearer ${prospectLogin.body.token}`;
+    const insertProspectChatJob = async (status) =>
+      Number(
+        (
+          await query(
+            `INSERT INTO prospect_research_chat_jobs
+              (public_id, session_id, requested_by_user_id, status, request_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, NOW(3), NOW(3))`,
+            [
+              `prcj_cancel_${status}_${Date.now()}`,
+              Number(sessionId),
+              Number(ctx.prospectResearchUserId),
+              status,
+              JSON.stringify({ question: "Pregunta de prueba" }),
+            ],
+          )
+        ).insertId,
+      );
+    const cancelProspectJob = (jobId, auth = prospectAuth) =>
+      request(app)
+        .post(
+          `/api/prospect-research/sessions/${sessionId}/chat/jobs/${jobId}/cancel`,
+        )
+        .set("Authorization", auth);
+    for (const status of ["pending", "running"]) {
+      const cancelResponse = await cancelProspectJob(
+        await insertProspectChatJob(status),
+      );
+      expect(cancelResponse.status).toBe(200);
+      expect(cancelResponse.body.job).toMatchObject({ status: "cancelled" });
+    }
+    const finishedJobId = await insertProspectChatJob("completed");
+    const finishedCancel = await cancelProspectJob(finishedJobId);
+    expect(finishedCancel.status).toBe(200);
+    expect(finishedCancel.body.job.status).toBe("completed");
+    const foreignCancel = await cancelProspectJob(
+      await insertProspectChatJob("pending"),
+      `Bearer ${noCoachLogin.body.token}`,
+    );
+    expect([403, 404]).toContain(foreignCancel.status);
+    const stillPending = await query(
+      `SELECT status FROM prospect_research_chat_jobs
+       WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+      [Number(sessionId)],
+    );
+    expect(stillPending[0].status).toBe("pending");
+
+    const prospectRolloutRows = await query(
+      `SELECT enabled, rollout_percentage, allowlist_json
+       FROM coach_channel_rollouts WHERE channel = 'prospect' LIMIT 1`,
+    );
+    const originalProspectRollout = prospectRolloutRows[0];
+    try {
+      await query(
+        `UPDATE coach_channel_rollouts SET enabled = FALSE WHERE channel = 'prospect'`,
+      );
+      // The rollout does not apply to Cuenta nueva: the chat stays open for every user.
+      const openJob = await request(app)
+        .post(`/api/prospect-research/sessions/${sessionId}/chat/jobs`)
+        .set("Authorization", prospectAuth)
+        .send({ question: "¿Qué hipótesis valido primero?" });
+      expect(openJob.status).toBe(202);
+    } finally {
+      await query(
+        `UPDATE coach_channel_rollouts
+         SET enabled = ?, rollout_percentage = ?, allowlist_json = ?
+         WHERE channel = 'prospect'`,
+        [
+          originalProspectRollout.enabled ? 1 : 0,
+          originalProspectRollout.rollout_percentage,
+          typeof originalProspectRollout.allowlist_json === "string"
+            ? originalProspectRollout.allowlist_json
+            : JSON.stringify(originalProspectRollout.allowlist_json ?? []),
+        ],
+      );
+    }
+
     const prospectChatJobCreateResponse = await request(app)
       .post(`/api/prospect-research/sessions/${sessionId}/chat/jobs`)
       .set("Authorization", `Bearer ${prospectLogin.body.token}`)

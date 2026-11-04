@@ -572,7 +572,9 @@ Esta clasificación corresponde al paso 2 de la separación del motor. Es un map
 | Interfaz                         | `apps/web/src/MiAgentPage.jsx` | Adaptador de Cuenta nueva; no debe duplicar interpretación |
 | Clasificación de la pregunta     | `prospect-research/prospect-intent-classifier.js` | Clasificador semántico del canal, con los patrones de `channel-intents.js` como respaldo |
 | Verificación de la respuesta     | `prospect-research/prospect-verifier.js` | Comprueba datos de la respuesta contra la sesión; reutiliza `answer-grounding.js` y `claim-verifier.js` |
-| Instrucciones de ayuda           | `prospect-research/prospect-prompts.js` | Contrato de lo que debe entregar cada intención de ayuda (correo, llamada, priorización, objeciones, siguiente paso) |
+| Instrucciones de ayuda           | `prospect-research/prospect-prompts.js` | Contrato de lo que debe entregar cada intención de ayuda (correo, llamada, priorización, objeciones, siguiente paso, material y clientes parecidos) |
+| Contexto CRM y biblioteca        | `prospect-research/prospect-crm-lookups.js`, `prospect-crm-context.js` | Clientes parecidos, responsables, preparación para convertir y material de la biblioteca, con los permisos del vendedor |
+| Reglas del servidor              | `coach/prospect-server-policy.js`, `prospect-research/prospect-server-rules.js` | Política versionada del canal (biblioteca, clientes parecidos, conversiones, clasificador, modelo, memoria) |
 
 ### 16.5 Límites de extracción
 

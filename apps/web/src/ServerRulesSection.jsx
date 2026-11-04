@@ -2,7 +2,10 @@ import { useState } from "react";
 import { api, getApiErrorMessage } from "./api";
 
 const ENDPOINT = "/api/commercial-intelligence/governance/server-rules";
+const CONNECTED_CHANNELS = { customer_account: "Cliente existente", prospect: "Cuenta nueva" };
+const endpointFor = (target) => (target === "prospect" ? `${ENDPOINT}/prospect` : ENDPOINT);
 const OPERATION_LABELS = {
+  create_account: "Crear cuenta",
   activity: "Actividad", stage_answer: "Respuesta de etapa",
   lead_call_outcome: "Resultado de llamada", account_field: "Campo de cuenta",
   contact_field: "Campo de contacto", opportunity_field: "Campo de oportunidad",
@@ -25,12 +28,12 @@ export default function ServerRulesSection() {
   const [revision, setRevision] = useState("");
   const dirty = Boolean(configuration && JSON.stringify(draft) !== JSON.stringify(configuration.rules));
 
-  async function load() {
+  async function load(target = channel) {
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      const { data } = await api.get(ENDPOINT);
+      const { data } = await api.get(endpointFor(target));
       setConfiguration(data);
       setDraft(structuredClone(data.rules));
       setRevision("");
@@ -46,13 +49,13 @@ export default function ServerRulesSection() {
     setError("");
     setMessage("");
     try {
-      const { data } = await api.put(`${ENDPOINT}/customer_account`, {
+      const { data } = await api.put(`${ENDPOINT}/${channel}`, {
         expectedVersion: configuration.version, rules: draft,
       });
       setConfiguration(data);
       setDraft(structuredClone(data.rules));
       setRevision("");
-      setMessage(`Versión ${data.version} guardada. Se aplicará en el siguiente turno de Cliente existente.`);
+      setMessage(`Versión ${data.version} guardada. Se aplicará en el siguiente turno de ${CONNECTED_CHANNELS[channel]}.`);
     } catch (requestError) {
       setError(getApiErrorMessage(requestError, "No fue posible guardar las reglas del servidor."));
     } finally {
@@ -134,19 +137,32 @@ export default function ServerRulesSection() {
       </summary>
       <div className="mi-agent-domain-policy-content">
         <label>Canal de reglas del servidor
-          <select value={channel} onChange={(event) => setChannel(event.target.value)} disabled={busy}>
+          <select
+            value={channel}
+            onChange={(event) => {
+              const next = event.target.value;
+              setChannel(next);
+              setConfiguration(null);
+              setDraft(null);
+              setRevision("");
+              setMessage("");
+              setError("");
+              if (CONNECTED_CHANNELS[next]) load(next);
+            }}
+            disabled={busy}
+          >
             <option value="customer_account">Cliente existente · conectado</option>
             <option value="coach">Coach · pendiente de conexión</option>
-            <option value="prospect">Cuenta nueva · pendiente de conexión</option>
+            <option value="prospect">Cuenta nueva · conectado</option>
           </select>
         </label>
         {error ? <p role="alert" className="mi-agent-server-rules-error">{error}</p> : null}
         {message ? <p role="status">{message}</p> : null}
-        {channel !== "customer_account" ? (
+        {!CONNECTED_CHANNELS[channel] ? (
           <p>Este canal está preparado para una etapa posterior. Esta sección todavía no modifica sus flujos. Su configuración vigente se conserva en Políticas del canal y contexto.</p>
         ) : configuration && draft ? (
           <form onSubmit={(event) => { event.preventDefault(); save(); }}>
-            <p><strong>Versión {configuration.version}</strong> · customer_account / default.
+            <p><strong>Versión {configuration.version}</strong> · {configuration.channel} / {configuration.process}.
               Los cambios se aplican en el siguiente turno, no a un turno ya iniciado.
               Ninguna política concede permisos ni elimina la confirmación o la evidencia obligatoria.</p>
             {configuration.updatedAt ? (

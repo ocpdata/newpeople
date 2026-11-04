@@ -13,9 +13,13 @@ import {
   createProspectChatAdapter,
 } from "./prospect-chat-adapter.js";
 import { buildProspectCrmContext } from "./prospect-crm-context.js";
+import { loadAccountOwners, loadSimilarCustomers } from "./prospect-crm-lookups.js";
+import { abortActiveTurn, runWithTurnContext } from "../commercial-intelligence/turn-context.js";
 import { recordCoachTurnQualityTrace } from "../coach/observability.js";
+import { loadCoachBusinessRules } from "../coach/business-rules.js";
 
 const activeExternalResearchRunIds = new Set();
+const PROSPECT_CANCEL_POLL_MS = 2000;
 
 export const PROSPECT_RESEARCH_TRACKS = [
   {
@@ -1962,18 +1966,44 @@ export async function getProspectChatJob({ user, sessionId, jobId }) {
   return mapProspectChatJobRow(rows[0]);
 }
 
-async function withProspectCrmContext(session) {
+const loadProspectRules = () => loadCoachBusinessRules({ channel: "prospect", process: "prospect_chat" });
+
+async function withProspectCrmContext(session, user, rules) {
+  const candidates = session.duplicateReview?.candidates || [];
+  const canReadAll = hasPermission(user, "cuentas.read_all");
+  let similar = null;
+  let owners = {};
+  const similarAllowed = rules?.scope?.similarCustomersAllowed !== false;
+  if (similarAllowed && (canReadAll || hasPermission(user, "cuentas.read"))) {
+    try {
+      const countryId = await resolveCountryId(session.country);
+      [similar, owners] = await Promise.all([
+        loadSimilarCustomers({
+          run: query, user, industry: session.industry, countryId,
+          excludeAccountIds: candidates.map((candidate) => candidate.id), canReadAll,
+        }),
+        loadAccountOwners({ run: query, accountIds: candidates.map((candidate) => candidate.id) }),
+      ]);
+    } catch (error) {
+      // The chat still works with the session alone; the CRM neighborhood is an addition.
+      console.error("[prospect-chat] CRM context lookup failed", { code: error?.code || error?.name });
+    }
+  }
   return {
     ...session,
     crm: buildProspectCrmContext({
       duplicateReview: session.duplicateReview,
       conversionAllowed: (await getMiCoachGovernanceSettings())
         .allowProspectConversion,
+      similar,
+      owners,
+      session,
+      allowedKinds: rules?.operationPolicy?.allowedKinds ?? null,
     }),
   };
 }
 
-export async function processProspectChatJob({ user, jobId }) {
+async function runProspectChatJob({ user, jobId }) {
   await ensureProspectResearchSchema();
   const rows = await query(
     `SELECT * FROM prospect_research_chat_jobs
@@ -2011,10 +2041,12 @@ export async function processProspectChatJob({ user, jobId }) {
 
     let turn;
     try {
+      const businessRules = await loadProspectRules();
       turn = await createProspectChatAdapter({
         user,
-        session: await withProspectCrmContext(session),
+        session: await withProspectCrmContext(session, user, businessRules),
         jobId: Number(jobId),
+        businessRules,
       }).runTurn({
         question,
         history: (Array.isArray(session.chatHistory) ? session.chatHistory : [])
@@ -2068,6 +2100,16 @@ export async function processProspectChatJob({ user, jobId }) {
     };
 
     await withTransaction(async (conn) => {
+      // Completing the job first also tells whether the user cancelled it while it ran: a cancelled turn leaves
+      // neither an answer nor a trace in the conversation.
+      const [completion] = await conn.query(
+        `UPDATE prospect_research_chat_jobs
+         SET status = 'completed', result_json = ?, error_message = NULL,
+             updated_at = NOW(3), finished_at = NOW(3)
+         WHERE id = ? AND requested_by_user_id = ? AND status = 'running'`,
+        [JSON.stringify(response), Number(jobId), Number(user.id)],
+      );
+      if (!completion.affectedRows) return;
       const [sessionRows] = await conn.query(
         `SELECT chat_history_json FROM prospect_research_sessions
          WHERE id = ? AND requested_by_user_id = ? FOR UPDATE`,
@@ -2090,13 +2132,6 @@ export async function processProspectChatJob({ user, jobId }) {
          WHERE id = ? AND requested_by_user_id = ?`,
         [JSON.stringify(nextHistory), Number(session.id), Number(user.id)],
       );
-      await conn.query(
-        `UPDATE prospect_research_chat_jobs
-         SET status = 'completed', result_json = ?, error_message = NULL,
-             updated_at = NOW(3), finished_at = NOW(3)
-         WHERE id = ? AND requested_by_user_id = ?`,
-        [JSON.stringify(response), Number(jobId), Number(user.id)],
-      );
     });
   } catch (error) {
     const errorMessage = clip(
@@ -2107,7 +2142,7 @@ export async function processProspectChatJob({ user, jobId }) {
       `UPDATE prospect_research_chat_jobs
        SET status = 'failed', error_message = ?, updated_at = NOW(3),
            finished_at = NOW(3)
-       WHERE id = ? AND requested_by_user_id = ?`,
+       WHERE id = ? AND requested_by_user_id = ? AND status = 'running'`,
       [errorMessage, Number(jobId), Number(user.id)],
     ).catch(() => undefined);
   }
@@ -2119,16 +2154,52 @@ export async function processProspectChatJob({ user, jobId }) {
   });
 }
 
+export async function processProspectChatJob({ user, jobId }) {
+  const key = `prospect:${Number(jobId)}`;
+  return runWithTurnContext({ jobId: key }, async () => {
+    // A cancel handled by another API process is noticed by polling, as in the account chat.
+    const poll = setInterval(() => {
+      query(
+        `SELECT status FROM prospect_research_chat_jobs WHERE id = ? AND requested_by_user_id = ? LIMIT 1`,
+        [Number(jobId), Number(user.id)],
+      ).then((rows) => { if (rows[0]?.status === "cancelled") abortActiveTurn(key); }).catch(() => undefined);
+    }, PROSPECT_CANCEL_POLL_MS);
+    poll.unref?.();
+    try {
+      return await runProspectChatJob({ user, jobId });
+    } finally {
+      clearInterval(poll);
+    }
+  });
+}
+
+// Only a turn that has not finished can be cancelled; a finished one is returned as is so the client shows it.
+export async function cancelProspectChatJob({ user, sessionId, jobId }) {
+  await ensureProspectResearchSchema();
+  await query(
+    `UPDATE prospect_research_chat_jobs
+     SET status = 'cancelled', error_message = 'Cancelado por el usuario',
+         updated_at = NOW(3), finished_at = NOW(3)
+     WHERE id = ? AND session_id = ? AND requested_by_user_id = ?
+       AND status IN ('pending', 'running')`,
+    [Number(jobId), Number(sessionId), Number(user.id)],
+  );
+  abortActiveTurn(`prospect:${Number(jobId)}`);
+  return getProspectChatJob({ user, sessionId, jobId });
+}
+
 export async function runProspectChat({ user, sessionId, question }) {
   await ensureProspectResearchSchema();
   const session = await getProspectResearchSession({ user, sessionId });
   if (!session) return null;
   let result;
   try {
+    const businessRules = await loadProspectRules();
     result = await createProspectChatAdapter({
       user,
-      session: await withProspectCrmContext(session),
+      session: await withProspectCrmContext(session, user, businessRules),
       jobId: null,
+      businessRules,
     }).runTurn({ question, history: session.chatHistory });
   } catch (error) {
     result = {

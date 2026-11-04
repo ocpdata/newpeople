@@ -18,6 +18,8 @@ const STRUCTURE_VOCABULARY = [
   "director", "directora", "gerente", "jefe", "jefa", "ti", "ot", "it", "crm", "tu", "nombre", "estimado", "estimada",
   "hola", "saludos", "cordiales", "cordial", "atentamente", "gracias", "nota", "importante", "primero", "segundo",
   "tercero", "ahora", "contexto", "tema", "propuesta", "ejemplo", "opcion", "opciones", "mensaje", "idea", "ideas",
+  "biblioteca", "ventas", "material", "materiales", "presentacion", "folleto", "caso", "casos", "uso", "exito", "cliente",
+  "clientes", "similar", "similares", "interno", "interna", "cuenta", "cuentas", "comercial",
 ].join(" ");
 
 const normalizeText = (value) => String(value ?? "")

@@ -36,13 +36,14 @@ export async function classifyProspectIntent({
   availableTools = [],
   context = {},
   coverage = null,
+  allowed = true,
   userId,
   jobId = null,
   call = runStructuredTextResearch,
   loadPrompt = loadSemanticClassifierPrompt,
   timeoutMs = CLASSIFIER_TIMEOUT_MS,
 } = {}) {
-  if (!prospectClassifierEnabled()) return null;
+  if (!allowed || !prospectClassifierEnabled()) return null;
   const enabled = (Array.isArray(catalog) ? catalog : []).filter((intent) => intent?.enabled !== false);
   const codes = enabled.map((intent) => intent.code);
   if (!codes.length || !String(question || "").trim()) return null;

@@ -21,6 +21,7 @@ const GROUPS = {
   area_d: "Conversión segura",
   area_e: "Conversación",
   area_f: "Ayuda al vendedor",
+  area_g: "Biblioteca y contexto CRM",
   known_gaps_fixed: "Brechas conocidas corregidas",
   reliability: "Turnos sin fallo",
   resolution: "Turnos resueltos",

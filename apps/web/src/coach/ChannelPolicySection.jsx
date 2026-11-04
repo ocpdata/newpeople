@@ -97,8 +97,8 @@ export function ChannelPolicySection({ coachBusinessRulesChannel, coachBusinessR
           )}
         </div>
 
-        {coachBusinessRulesChannel === "customer_account" ? (
-          <p>Las políticas de Cliente existente ahora se administran en{" "}
+        {["customer_account", "prospect"].includes(coachBusinessRulesChannel) ? (
+          <p>Las políticas de {coachBusinessRulesChannel === "prospect" ? "Cuenta nueva" : "Cliente existente"} ahora se administran en{" "}
             <a href="#mi-agent-server-rules" onClick={() => {
               const section = document.getElementById("mi-agent-server-rules");
               if (section) section.open = true;

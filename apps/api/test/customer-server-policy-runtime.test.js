@@ -265,11 +265,11 @@ describe("Customer server policies at runtime", () => {
       vi.useRealTimers();
     }
   });
-  it("keeps Coach and prospect policies unchanged and disconnected", () => {
-    for (const channel of ["coach", "prospect"]) {
-      expect(getCoachBusinessRules({
-        channel, overrides: { serverPolicy: { maxReadQueries: 1, selectedOpportunityFallback: "require_explicit" } },
-      }).serverPolicy).toBeUndefined();
-    }
+  it("keeps Coach unchanged and gives prospect its own policy, untouched by the customer keys", () => {
+    const overrides = { serverPolicy: { maxReadQueries: 1, selectedOpportunityFallback: "require_explicit" } };
+    expect(getCoachBusinessRules({ channel: "coach", overrides }).serverPolicy).toBeUndefined();
+    const prospect = getCoachBusinessRules({ channel: "prospect", overrides }).serverPolicy;
+    expect(prospect).not.toHaveProperty("maxReadQueries");
+    expect(prospect).toMatchObject({ semanticClassifier: "on", helpModelRole: "advanced", maxHistoryMessages: 16 });
   });
 });

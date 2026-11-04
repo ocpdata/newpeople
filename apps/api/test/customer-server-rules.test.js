@@ -85,12 +85,12 @@ beforeEach(() => {
 });
 
 describe("Connected customer server rules", () => {
-  it("uses existing configuration and exposes all nine categories and pending channels", async () => {
+  it("uses existing configuration and exposes all nine categories and the connected channels", async () => {
     const result = await getCustomerServerRulesAdmin();
     expect(result.version).toBe(0);
     expect(result.rules.filters.defaultOpenOnly).toBe(false);
     expect(result.categories).toHaveLength(9);
-    expect(result.channels.filter((item) => item.connected).map((item) => item.channel)).toEqual(["customer_account"]);
+    expect(result.channels.filter((item) => item.connected).map((item) => item.channel)).toEqual(["customer_account", "prospect"]);
     expect(CUSTOMER_SERVER_RULE_CATEGORIES.flatMap((item) => item.rules).map((rule) => rule.id))
       .toEqual(expect.arrayContaining(["single-operation-target", "user-access", "answer-audit", "execution-access"]));
   });

@@ -5,9 +5,41 @@ import { gradeProspectTurn, judgeProspectTurn } from "./prospect-judge.js";
 
 export const prospectBank = bank;
 
+// A session may extend another one and override parts of it (for example to add CRM context or library material), so the
+// bank does not repeat a whole prospect to vary one fact.
+export function resolveBankSessions(candidate = bank) {
+  const resolve = (key, trail = []) => {
+    const entry = candidate.sessions[key];
+    if (!entry?.extends) return entry;
+    if (trail.includes(key)) throw new Error(`Sesiones que se extienden en círculo: ${[...trail, key].join(" > ")}`);
+    const { extends: parent, ...overrides } = entry;
+    return { ...structuredClone(resolve(parent, [...trail, key])), ...overrides };
+  };
+  return Object.fromEntries(Object.keys(candidate.sessions).map((key) => [key, resolve(key)]));
+}
+
+const LIBRARY_PERMISSION = "enablement_comercial.use";
+
+// The bank's library is synthetic: a session that carries `libraryAssets` reads them instead of the real library, and
+// every other session reads none, so the scores never depend on what the development library holds.
+export function createBankAdapter({ user, session, jobId }) {
+  const permissions = new Set(user?.permissionSet || []);
+  if (session.libraryAssets) permissions.add(LIBRARY_PERMISSION);
+  else permissions.delete(LIBRARY_PERMISSION);
+  return createProspectChatAdapter({
+    user: { ...user, permissionSet: permissions },
+    session,
+    jobId,
+    ...(session.libraryAssets ? { listLibraryAssets: async () => ({ items: session.libraryAssets }) } : {}),
+  });
+}
+
 // Integrity of the bank itself: runs without AI and guards against edits that would silently weaken the evaluation.
 export function validateBank(candidate = bank) {
   const problems = [];
+  for (const [key, entry] of Object.entries(candidate.sessions)) {
+    if (entry.extends && !candidate.sessions[entry.extends]) problems.push(`Sesión ${key}: extiende una sesión inexistente (${entry.extends})`);
+  }
   const ids = new Set();
   for (const scenario of candidate.scenarios) {
     if (ids.has(scenario.id)) problems.push(`Escenario duplicado: ${scenario.id}`);
@@ -51,7 +83,7 @@ async function executeTurn({ session, turn, history, user, jobId, createAdapter 
 }
 
 export async function runProspectScenario({ scenario, user, judgeModel = null, nextJobId, log = () => {},
-  createAdapter = createProspectChatAdapter, judge = judgeProspectTurn, sessions = bank.sessions }) {
+  createAdapter = createBankAdapter, judge = judgeProspectTurn, sessions = resolveBankSessions() }) {
   const session = structuredClone(sessions[scenario.session]);
   const history = [];
   const previousTurns = [];

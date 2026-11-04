@@ -825,6 +825,8 @@ export async function runConversationEngine({
       return businessRules.scope.contactSearchAllowed;
     if (tool.name === "searchAccounts")
       return businessRules.scope.accountSearchAllowed !== false;
+    if (tool.name === "getLibraryMaterials")
+      return businessRules.scope.libraryMaterialsAllowed !== false;
     return true;
   });
   const intentCatalog =

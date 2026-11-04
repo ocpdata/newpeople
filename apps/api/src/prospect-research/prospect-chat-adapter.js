@@ -1,5 +1,6 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
 import { aiModelFor } from "../ai-services/state.js";
+import { shapeLibraryMaterials } from "../coach/performance-tools.js";
 import { runConversationEngine } from "../coach/conversation-engine.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { listCoachAdminRules } from "../coach/admin-rules.js";
@@ -13,11 +14,34 @@ import { PROSPECT_CHAT_INSTRUCTION, PROSPECT_HELP_INTENTS, PROSPECT_SYSTEM_PROMP
 export { normalizeProspectRecommendedActions };
 
 const CHAT_FEATURE_CODE = "prospect_research.chat";
+const LIBRARY_TOOL = "getLibraryMaterials";
 
-// Drafting and prioritizing may run on the module's advanced model; it stays off until the bank shows it is worth the cost.
-function helpModelFor(intent, env = process.env) {
+// Library material that fits the prospect's industry, hypotheses and findings, read with the seller's own visibility.
+async function loadProspectLibrary({ user, snapshot, question, listAssets }) {
+  const list = listAssets || (await import("../commercial-enablement/library-service.js")).listCommercialEnablementAssets;
+  const result = await list({ user, filters: { pageSize: 200 } });
+  const hypotheses = snapshot.hypotheses || [];
+  const shaped = shapeLibraryMaterials({
+    assets: result?.items || [],
+    question,
+    opportunity: {
+      name: [
+        ...hypotheses.map((hypothesis) => `${hypothesis.title || ""} ${hypothesis.technologyArea || ""}`),
+        ...(snapshot.findings || []).slice(0, 4).map((finding) => finding.title || ""),
+      ].join(" "),
+      account: snapshot.profile?.industry || "",
+    },
+  });
+  return { ...shaped, focus: { prospect: snapshot.profile?.companyName || null, industry: snapshot.profile?.industry || null } };
+}
+
+// Help answers (drafting, prioritizing, material) run on the module's advanced model by default. The server rule
+// decides; PROSPECT_CHAT_HELP_MODEL_ROLE (fast|advanced) overrides it when set.
+function helpModelFor(intent, policyRole = "advanced", env = process.env) {
   if (!PROSPECT_HELP_INTENTS.has(intent)) return null;
-  if (String(env.PROSPECT_CHAT_HELP_MODEL_ROLE || "fast").toLowerCase() !== "advanced") return null;
+  const override = String(env.PROSPECT_CHAT_HELP_MODEL_ROLE || "").toLowerCase();
+  const role = override === "fast" || override === "advanced" ? override : policyRole;
+  if (role !== "advanced") return null;
   return aiModelFor(CHAT_FEATURE_CODE, "advanced") || null;
 }
 
@@ -212,7 +236,7 @@ export function normalizeProspectResponse(result, scopedSnapshot, question, cont
   };
 }
 
-export function createProspectChatAdapter({ user, session, jobId }) {
+export function createProspectChatAdapter({ user, session, jobId, listLibraryAssets = null, businessRules: providedRules = null }) {
   const snapshot = {
     profile: session.result?.profile || {
       companyName: session.companyName,
@@ -230,6 +254,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
   const permissions = user?.permissionSet || new Set();
   // Per-turn facts for the quality trace; runTurn resets them.
   let turnState = {};
+  let turnRules = providedRules;
   const availableTools = [
     { name: "getProspectProfile", requiredPermission: "prospeccion.read" },
     { name: "searchProspectFindings", requiredPermission: "prospeccion.read" },
@@ -238,6 +263,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       name: "searchProspectHypotheses",
       requiredPermission: "prospeccion.read",
     },
+    { name: LIBRARY_TOOL, requiredPermission: "enablement_comercial.use" },
   ];
   const dependencies = {
     loadChannelIntentConfigurations: ({ channel }) =>
@@ -250,6 +276,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         availableTools: resolvedTools,
         context,
         coverage: buildSessionCoverage(snapshot),
+        allowed: turnRules?.serverPolicy?.semanticClassifier !== "off",
         userId: user?.id,
         jobId,
       });
@@ -259,7 +286,9 @@ export function createProspectChatAdapter({ user, session, jobId }) {
     getTurnDiagnostics: () => ({ prospectChat: turnState }),
     loadAdministrativeRules: listCoachAdminRules,
     prepareReadModel: async ({
+      question,
       availableTools: resolvedTools,
+      authorizedTools = resolvedTools,
       conversationHistory = [],
       channelIntentRouting = null,
       channelIntentCatalog = [],
@@ -274,12 +303,28 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       };
       pushTool("getProspectProfile");
       for (const toolName of channelIntentRouting?.allowedTools || []) {
+        if (toolName === LIBRARY_TOOL) continue;
         if (toolName !== "getProspectProfile") pushTool(toolName);
+      }
+      if (names.has(LIBRARY_TOOL) && (channelIntentRouting?.allowedTools || []).includes(LIBRARY_TOOL)) {
+        try {
+          readToolResults.push({
+            toolName: LIBRARY_TOOL,
+            readOnly: true,
+            result: await loadProspectLibrary({ user, snapshot, question, listAssets: listLibraryAssets }),
+          });
+        } catch (error) {
+          console.error("[prospect-chat] Library lookup failed", { jobId, code: error?.code || error?.name });
+          readToolResults.push({ toolName: LIBRARY_TOOL, readOnly: true, result: null, error: "No fue posible consultar la biblioteca." });
+        }
       }
       const selectedContext = { prospectSessionId: session.id };
       const modelSnapshot = {
         ...snapshot,
         sessionCoverage: buildSessionCoverage(snapshot),
+        libraryAccess: turnRules?.scope?.libraryMaterialsAllowed === false
+          ? "disabled_by_rules"
+          : authorizedTools.some((tool) => tool.name === LIBRARY_TOOL) ? "authorized" : "not_authorized",
         selectedContext,
         readToolResults,
         conversationHistory,
@@ -342,7 +387,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         payload.question,
         routing,
       );
-      const model = helpModelFor(routing?.intent);
+      const model = helpModelFor(routing?.intent, turnRules?.serverPolicy?.helpModelRole);
       turnState.generation = { intent: routing?.intent || null, modelRole: model ? "advanced" : "fast" };
       const askModel = (correction = null) => runStructuredTextResearch({
         schemaName: "prospect_contextual_chat",
@@ -389,7 +434,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       if (!prospectVerificationEnabled()) return result;
       const checked = await verifyAndRepairAnswer({
         result,
-        snapshot,
+        snapshot: { ...snapshot, readToolResults: payload.context?.readToolResults },
         question: payload.question,
         history: payload.conversationHistory,
         repair: askModel,
@@ -416,8 +461,16 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       allowedKinds: ["create_account", "create_contact", "create_opportunity"],
       sourceChannel: "prospect",
     },
-    async runTurn({ question, history = [] }) {
+    async runTurn({ question, history: fullHistory = [] }) {
       turnState = {};
+      const rules = providedRules
+        || (await loadCoachBusinessRules({
+          channel: "prospect",
+          process: "prospect_chat",
+        }));
+      turnRules = rules;
+      const historyWindow = Number(rules?.serverPolicy?.maxHistoryMessages) || 16;
+      const history = fullHistory.slice(-historyWindow);
       const guarded = buildGuardedProspectTurn({
         question,
         snapshot,
@@ -426,10 +479,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         normalizeResponse: normalizeProspectResponse,
       });
       if (guarded) return guarded;
-      const businessRules = await loadCoachBusinessRules({
-        channel: "prospect",
-        process: "prospect_chat",
-      });
+      const businessRules = rules;
       return runConversationEngine({
         question,
         context: { prospectSessionId: session.id },

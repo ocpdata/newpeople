@@ -7,11 +7,23 @@ import {
 import { CoachQualityFeedback } from "./CoachQualityFeedback";
 import { ChannelTurnFeedback } from "./ChannelTurnFeedback";
 import { CustomerChatAnswer } from "./CustomerChatAnswer";
+import { CustomerChatCopyButton } from "./CustomerChatCopyButton";
+import { CustomerChatProgress } from "./CustomerChatProgress";
+
+// Questions a seller asks most when starting with a prospect; each one sends its full text.
+const PROSPECT_SUGGESTIONS = [
+  { label: "¿Por dónde empiezo?", question: "¿Por dónde empiezo con este prospecto? Dame un plan corto." },
+  { label: "Redactar correo", question: "Redáctame un correo de primer contacto para el contacto más indicado." },
+  { label: "Preparar llamada", question: "Prepárame la llamada de descubrimiento." },
+  { label: "Objeciones", question: "¿Qué objeciones me pueden poner y cómo las respondo?" },
+  { label: "Material", question: "¿Qué material de la biblioteca puedo compartir con este prospecto?" },
+  { label: "¿Qué falta saber?", question: "¿Qué me falta saber antes de proponer una reunión?" },
+];
 import { isProspectConversionAction, isProspectConversionOperation } from "./miAgentHelpers";
 import { CheckCircle2 } from "lucide-react";
 import { CUSTOMER_FINDING_CONFIDENCE_LABELS } from "./customerChatShared";
 
-export function ProspectWorkspace({ askProspectChat, canCreateAccounts, canCreateContacts, canCreateLeads, canCreateOpportunities, canCreateProspecting, canReviewCustomerOperation, canUpdateProspecting, canUseExternalSources, convertProspectContact, convertProspectOpportunity, deleteSavedProspect, loadProspectSessions, openCustomerChatOperation, openSavedProspect, prospectChatLoading, prospectChatMessages, prospectChatQuestion, prospectContactDrafts, prospectConvertedAccountId, prospectConvertedContacts, prospectConvertedLeadId, prospectConvertedOpportunities, prospectConverting, prospectError, prospectExternalResearching, prospectFindingUpdatingId, prospectForm, prospectList, prospectListError, prospectListLoading, prospectListSearch, prospectPreparing, prospectSession, prospectTargetUpdatingId, prospectView, runProspectExternalResearch, savingCoachOperation, setProspectChatMessages, setProspectChatQuestion, setProspectConversionConfirmation, setProspectError, setProspectForm, setProspectListSearch, setProspectSession, setProspectView, startProspectResearch, updateProspectContactDraft, updateProspectFindingStatus, updateProspectForm, updateProspectHypothesisStatus, updateProspectTarget }) {
+export function ProspectWorkspace({ askProspectChat, cancelProspectChat, canCreateAccounts, canCreateContacts, canCreateLeads, canCreateOpportunities, canCreateProspecting, canReviewCustomerOperation, canUpdateProspecting, canUseExternalSources, convertProspectContact, convertProspectOpportunity, deleteSavedProspect, loadProspectSessions, openCustomerChatOperation, openSavedProspect, prospectChatCanceling, prospectChatLoading, prospectChatMessages, prospectChatQuestion, prospectChatTurn, prospectContactDrafts, prospectConvertedAccountId, prospectConvertedContacts, prospectConvertedLeadId, prospectConvertedOpportunities, prospectConverting, prospectError, prospectExternalResearching, prospectFindingUpdatingId, prospectForm, prospectList, prospectListError, prospectListLoading, prospectListSearch, prospectNotice, prospectPreparing, prospectSession, prospectTargetUpdatingId, prospectView, runProspectExternalResearch, savingCoachOperation, setProspectChatMessages, setProspectChatQuestion, setProspectConversionConfirmation, setProspectError, setProspectForm, setProspectListSearch, setProspectSession, setProspectView, startProspectResearch, updateProspectContactDraft, updateProspectFindingStatus, updateProspectForm, updateProspectHypothesisStatus, updateProspectTarget }) {
   return (
     <section className="mi-agent-workspace-panel">
       <div className="mi-agent-section-heading">
@@ -429,7 +441,10 @@ export function ProspectWorkspace({ askProspectChat, canCreateAccounts, canCreat
                     {message.role === "seller" ? (
                       <p>{message.text || message.answer}</p>
                     ) : (
-                      <CustomerChatAnswer answer={message.text || message.answer} />
+                      <>
+                        <CustomerChatAnswer answer={message.text || message.answer} />
+                        <CustomerChatCopyButton text={message.text || message.answer} />
+                      </>
                     )}
                     <CoachQualityFeedback
                       traceId={message.qualityTraceId}
@@ -506,6 +521,42 @@ export function ProspectWorkspace({ askProspectChat, canCreateAccounts, canCreat
                 ))}
               </div>
             ) : null}
+            {prospectChatTurn ? (
+              <CustomerChatProgress
+                turn={{
+                  ...prospectChatTurn,
+                  progress: {
+                    label: prospectChatTurn.jobId
+                      ? "Preparando la respuesta con la sesión"
+                      : "Enviando la pregunta",
+                  },
+                }}
+                onCancel={cancelProspectChat}
+                canceling={prospectChatCanceling}
+              />
+            ) : null}
+            {prospectNotice ? (
+              <p className="mi-agent-inline-notice" role="status">
+                {prospectNotice}
+              </p>
+            ) : null}
+            <div
+              className="mi-agent-prospect-suggestions"
+              role="group"
+              aria-label="Preguntas sugeridas"
+            >
+              {PROSPECT_SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion.label}
+                  type="button"
+                  className="mi-agent-secondary-button"
+                  disabled={prospectChatLoading}
+                  onClick={() => askProspectChat(suggestion.question)}
+                >
+                  {suggestion.label}
+                </button>
+              ))}
+            </div>
             <form
               className="mi-agent-coach-form"
               onSubmit={(event) => {
@@ -513,20 +564,29 @@ export function ProspectWorkspace({ askProspectChat, canCreateAccounts, canCreat
                 askProspectChat();
               }}
             >
-              <input
+              <textarea
+                rows={3}
+                aria-label="Pregunta sobre el prospecto"
                 value={prospectChatQuestion}
                 onChange={(event) =>
                   setProspectChatQuestion(event.target.value)
                 }
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    (event.ctrlKey || event.metaKey)
+                  ) {
+                    event.preventDefault();
+                    askProspectChat();
+                  }
+                }}
                 placeholder="Pregunta sobre el prospecto..."
                 disabled={prospectChatLoading}
               />
               <button
                 type="submit"
                 className="mi-agent-primary-button"
-                disabled={
-                  prospectChatLoading || !prospectChatQuestion.trim()
-                }
+                disabled={prospectChatLoading || !prospectChatQuestion.trim()}
               >
                 {prospectChatLoading ? "Consultando..." : "Preguntar"}
               </button>

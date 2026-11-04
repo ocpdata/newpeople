@@ -46,12 +46,14 @@ afterEach(() => {
 
 describe("instrucciones de ayuda al vendedor", () => {
   it("cada intención de ayuda agrega la instrucción común y la suya; las consultas no", () => {
-    expect([...PROSPECT_HELP_INTENTS].sort()).toEqual(["call_preparation", "contact_prioritization", "next_step_recommendation", "objection_handling", "outreach_draft"]);
+    expect([...PROSPECT_HELP_INTENTS].sort()).toEqual(["call_preparation", "contact_prioritization", "library_materials", "next_step_recommendation", "objection_handling", "outreach_draft", "similar_customers"]);
     for (const intent of PROSPECT_HELP_INTENTS) {
       expect(prospectIntentGuidance(intent)).toContain(PROSPECT_HELP_INSTRUCTION);
     }
     expect(prospectIntentGuidance("prospect_contacts")).toBe("");
     expect(prospectIntentGuidance(undefined)).toBe("");
+    expect(prospectIntentGuidance("public_research_review")).toContain("lista numerada");
+    expect(prospectIntentGuidance("public_research_review")).not.toContain(PROSPECT_HELP_INSTRUCTION);
   });
 
   it("piden entregar el resultado, no inventar y decir lo que falta", () => {
@@ -130,22 +132,27 @@ describe("verificación de la respuesta del modelo", () => {
 });
 
 describe("modelo de las respuestas de ayuda", () => {
-  it("usa el modelo rápido por defecto", async () => {
-    const research = vi.fn().mockResolvedValue({ answer: "ok" });
-    const { dependencies } = await loadAdapter({ research });
-    await ask(dependencies, "Redacta un correo", "outreach_draft");
-    expect(research.mock.calls[0][0].model).toBeUndefined();
-    expect(dependencies.getTurnDiagnostics().prospectChat.generation).toEqual({ intent: "outreach_draft", modelRole: "fast" });
-  });
-
-  it("usa el modelo avanzado del módulo solo para intenciones de ayuda cuando se configura", async () => {
-    vi.stubEnv("PROSPECT_CHAT_HELP_MODEL_ROLE", "advanced");
+  it("usa el modelo avanzado por defecto", async () => {
     const research = vi.fn().mockResolvedValue({ answer: "ok" });
     const { dependencies } = await loadAdapter({ research });
     await ask(dependencies, "Redacta un correo", "outreach_draft");
     expect(research.mock.calls[0][0].model).toBe("modelo-avanzado");
+    expect(dependencies.getTurnDiagnostics().prospectChat.generation).toEqual({ intent: "outreach_draft", modelRole: "advanced" });
+  });
+
+  it("usa el avanzado solo para intenciones de ayuda; las consultas siguen en el rápido", async () => {
+    const research = vi.fn().mockResolvedValue({ answer: "ok" });
+    const { dependencies } = await loadAdapter({ research });
     await ask(dependencies, "¿Qué contactos hay?", "prospect_contacts");
-    expect(research.mock.calls[1][0].model).toBeUndefined();
+    expect(research.mock.calls[0][0].model).toBeUndefined();
     expect(dependencies.getTurnDiagnostics().prospectChat.generation.modelRole).toBe("fast");
+  });
+
+  it("PROSPECT_CHAT_HELP_MODEL_ROLE=fast baja las respuestas de ayuda al modelo rápido", async () => {
+    vi.stubEnv("PROSPECT_CHAT_HELP_MODEL_ROLE", "fast");
+    const research = vi.fn().mockResolvedValue({ answer: "ok" });
+    const { dependencies } = await loadAdapter({ research });
+    await ask(dependencies, "Redacta un correo", "outreach_draft");
+    expect(research.mock.calls[0][0].model).toBeUndefined();
   });
 });

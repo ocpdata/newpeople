@@ -1192,6 +1192,8 @@
 .mi-agent-customer-chat-history-body li strong { font-size: 13px; overflow-wrap: anywhere; }
 .mi-agent-customer-chat-history-body li span { color: #536977; font-size: 12px; }
 .mi-agent-customer-chat-history-hint { margin: 0; color: #536977; font-size: 12px; }
+.mi-agent-prospect-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.mi-agent-prospect-suggestions .mi-agent-secondary-button { padding: 6px 12px; font-size: 13px; }
 
 .mi-agent-customer-operation-card { display: grid; gap: 8px; margin-top: 8px; }
 .mi-agent-customer-operation-card p { margin: 0; }

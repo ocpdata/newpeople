@@ -226,6 +226,49 @@ const CHANNEL_INTENTS = Object.freeze({
       priority: 100,
     },
     {
+      code: "similar_customers",
+      label: "Clientes parecidos y quién los atiende",
+      description:
+        "Muestra clientes del CRM parecidos al prospecto, lo que se les vendió y quién atiende una cuenta parecida, como referencia interna.",
+      tools: [
+        "getProspectProfile",
+        "searchProspectHypotheses",
+        "searchProspectFindings",
+      ],
+      context: ["prospectSession"],
+      examples: [
+        "¿Tenemos clientes parecidos a este prospecto?",
+        "¿Qué se les ha vendido a clientes como este?",
+      ],
+      patterns: [
+        /\b(clientes?|empresas?|cuentas?) (parecid[oa]s?|similares?)\b/,
+        /\bque (se )?(les )?(vendio|hemos vendido|vendimos)\b/,
+        /\bquien (la |lo )?(atiende|lleva)\b/,
+      ],
+      priority: 98,
+    },
+    {
+      code: "library_materials",
+      label: "Material de la biblioteca comercial",
+      description:
+        "Recomienda material de la biblioteca de ventas (presentaciones, casos de uso, folletos) para el sector, las hipótesis y los temas del prospecto.",
+      tools: [
+        "getProspectProfile",
+        "searchProspectHypotheses",
+        "searchProspectFindings",
+        "getLibraryMaterials",
+      ],
+      context: ["prospectSession"],
+      examples: [
+        "¿Qué material de la biblioteca puedo compartir con este prospecto?",
+        "¿Tenemos casos de éxito para este sector?",
+      ],
+      patterns: [
+        /\b(biblioteca|material|materiales|casos? de (exito|uso)|folletos?|brochures?|presentaciones?)\b/,
+      ],
+      priority: 97,
+    },
+    {
       code: "call_preparation",
       label: "Preparación de llamada",
       description:
@@ -282,6 +325,7 @@ const CHANNEL_INTENTS = Object.freeze({
         "searchProspectContacts",
         "searchProspectHypotheses",
         "searchProspectFindings",
+        "getLibraryMaterials",
       ],
       context: ["prospectSession"],
       examples: ["¿Qué objeciones me pueden poner y cómo las respondo?"],
@@ -301,6 +345,7 @@ const CHANNEL_INTENTS = Object.freeze({
         "searchProspectContacts",
         "searchProspectHypotheses",
         "searchProspectFindings",
+        "getLibraryMaterials",
       ],
       context: ["prospectSession"],
       examples: [
@@ -325,6 +370,7 @@ const CHANNEL_INTENTS = Object.freeze({
         "searchProspectContacts",
         "searchProspectHypotheses",
         "searchProspectFindings",
+        "getLibraryMaterials",
       ],
       context: ["prospectSession"],
       examples: ["Redacta un correo inicial para el contacto potencial"],

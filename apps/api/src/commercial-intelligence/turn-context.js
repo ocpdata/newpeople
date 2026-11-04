@@ -20,6 +20,10 @@ export function budgetExceededError(reason) {
   return Object.assign(new Error(message), { code: TURN_BUDGET_CODE, budgetReason: reason });
 }
 
+// Jobs of different channels have their own id sequences, so a channel may pass a string key (for example
+// `prospect:12`) to keep its turns apart from the numeric ids of the account chat.
+const turnKey = (jobId) => (typeof jobId === "string" ? jobId : Number(jobId));
+
 export function runWithTurnContext({ jobId = null, maxLlmCalls = Infinity, maxDurationMs = 0 } = {}, work) {
   const controller = new AbortController();
   const context = { jobId, controller, maxLlmCalls, llmCalls: 0, timer: null };
@@ -27,20 +31,20 @@ export function runWithTurnContext({ jobId = null, maxLlmCalls = Infinity, maxDu
     context.timer = setTimeout(() => controller.abort(budgetExceededError("time")), maxDurationMs);
     context.timer.unref?.();
   }
-  if (jobId !== null) activeTurns.set(Number(jobId), context);
+  if (jobId !== null) activeTurns.set(turnKey(jobId), context);
   return storage.run(context, async () => {
     try {
       return await work(controller.signal);
     } finally {
       clearTimeout(context.timer);
-      if (jobId !== null && activeTurns.get(Number(jobId)) === context) activeTurns.delete(Number(jobId));
+      if (jobId !== null && activeTurns.get(turnKey(jobId)) === context) activeTurns.delete(turnKey(jobId));
     }
   });
 }
 
 // Aborts the in-flight provider calls of a turn running in this process; returns whether one was found.
 export function abortActiveTurn(jobId) {
-  const context = activeTurns.get(Number(jobId));
+  const context = activeTurns.get(turnKey(jobId));
   if (!context || context.controller.signal.aborted) return false;
   context.controller.abort(cancelledTurnError());
   return true;

@@ -1,4 +1,4 @@
-import { CONVERSION_DISABLED_ANSWER, conversionBlock, duplicatesAnswer } from "./prospect-crm-context.js";
+import { CONVERSION_DISABLED_ANSWER, conversionBlock, duplicatesAnswer, kindDisabledAnswer, readinessAnswer } from "./prospect-crm-context.js";
 import { buildProspectOperations, normalizeProspectRecommendedActions, resolveConversionAction } from "./prospect-operations.js";
 
 // Turns the Cuenta nueva chat answers itself, without the model, because the answer is a fact about the session or
@@ -13,9 +13,12 @@ const normalize = (value) => String(value ?? "")
 
 const CONVERSION_VERB = /\b(convierte|convertir|convierta|convertirlo|convertirla|crea|crear|creame|creale|pasa|pasalo|pasala|registra|registrar|registralo|da de alta|dalo de alta|dala de alta|dar de alta|alta)\b/;
 const CONVERSION_TARGET = /\b(cuenta|contacto|oportunidad|lead|prospecto)\b/;
+const ASKS_PREREQUISITES = /\b(que (me )?falta|que necesito|que se necesita|que requisitos|requisitos)\b/;
 const CREATIVE_OBJECT = /\b(correo|email|mail|mensaje|borrador|resumen|lista|tabla|plan|guion|texto|pregunta|preguntas|agenda|briefing|acercamiento|llamada|objeciones|apertura|estrategia)\b/;
 const CRM_MENTION = /\b(?:en|del|de mi|de) (?:el |mi )?crm\b/;
 const CRM_CONSULT_OBJECT = /\b(oportunidades?|cotizaciones?|actividades|interacciones|pipeline|leads?|cuenta|cuentas)\b/;
+// The session already carries what the CRM says about similar or duplicate accounts; asking about it is not a CRM query.
+const SESSION_CRM_CONTEXT = /\b(parecid[oa]s?|similares?|atiende|lleva|duplicad[oa]s?)\b/;
 const EXISTENCE_CHECK = /\b(ya existe|existe ya|esta registrad[oa]|ya esta registrad[oa]|duplicad[oa]s?|ya es cliente|ya tenemos)\b/;
 const WEB_VERB = /\b(busca|buscar|buscame|investiga|investigar|consulta|averigua|revisa)\b/;
 const WEB_OBJECT = /\b(internet|web|en linea|google|ultimas noticias|noticias nuevas|noticias recientes|redes sociales)\b/;
@@ -79,13 +82,18 @@ export function detectGuardedTurn({ question, snapshot, history = [] }) {
     };
   }
   if (CONVERSION_VERB.test(text) && CONVERSION_TARGET.test(text) && !CREATIVE_OBJECT.test(text) && !/\bcuenta de correo\b/.test(text)) {
+    if (ASKS_PREREQUISITES.test(text)) {
+      const readiness = readinessAnswer({ text, snapshot });
+      if (readiness) return { kind: "conversion_readiness", answer: readiness };
+    }
     const action = /\blead\b/.test(text) ? null : resolveConversionAction({ question, snapshot });
     const block = conversionBlock(snapshot.crm, action ? action.target : "account");
     if (block?.reason === "disabled") return { kind: "conversion_blocked", answer: CONVERSION_DISABLED_ANSWER };
+    if (block?.reason === "kind_disabled") return { kind: "conversion_blocked", answer: kindDisabledAnswer(block.target) };
     if (block?.reason === "duplicates") return { kind: "conversion_blocked", answer: duplicatesAnswer(company, snapshot.crm) };
     return { kind: "conversion", answer: conversionAnswer({ text, snapshot, action }), action };
   }
-  if (CRM_MENTION.test(text) && CRM_CONSULT_OBJECT.test(text) && !isCreative(text)) {
+  if (CRM_MENTION.test(text) && CRM_CONSULT_OBJECT.test(text) && !isCreative(text) && !SESSION_CRM_CONTEXT.test(text)) {
     return {
       kind: "out_of_scope",
       answer: `Este chat trabaja solo con la sesión de prospección de ${company}; no consulta cuentas, oportunidades ni otros registros del CRM. Para consultar una cuenta del CRM usa Cliente existente.`,

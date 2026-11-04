@@ -53,6 +53,9 @@ import { GovernanceSettingsSection } from "./coach/GovernanceSettingsSection";
 import { IntentGovernanceSection } from "./coach/IntentGovernanceSection";
 import { ProspectWorkspace } from "./coach/ProspectWorkspace";
 
+// Longest a prospect question may stay without an answer before the wait ends; the server may take that long on slow providers.
+const PROSPECT_CHAT_MAX_WAIT_MS = 10 * 60 * 1000;
+
 export default function MiAgentPage({
   canUseCoach = false,
   canExecuteCoach = false,
@@ -254,6 +257,10 @@ export default function MiAgentPage({
   const [prospectChatQuestion, setProspectChatQuestion] = useState("");
   const [prospectChatMessages, setProspectChatMessages] = useState([]);
   const [prospectChatLoading, setProspectChatLoading] = useState(false);
+  const [prospectChatTurn, setProspectChatTurn] = useState(null);
+  const [prospectChatCanceling, setProspectChatCanceling] = useState(false);
+  const [prospectNotice, setProspectNotice] = useState("");
+  const prospectChatTurnRef = useRef(null);
   const [prospectPreparing, setProspectPreparing] = useState(false);
   const [prospectError, setProspectError] = useState("");
   const [prospectConversionConfirmation, setProspectConversionConfirmation] =
@@ -1697,10 +1704,24 @@ export default function MiAgentPage({
 
   async function askProspectChat(question = prospectChatQuestion) {
     const normalizedQuestion = String(question || "").trim();
-    if (!normalizedQuestion || !prospectSession?.id) return;
+    if (
+      !normalizedQuestion ||
+      !prospectSession?.id ||
+      prospectChatTurnRef.current
+    )
+      return;
     const sessionId = Number(prospectSession.id);
+    const turn = {
+      jobId: null,
+      startedAt: Date.now(),
+      question: normalizedQuestion,
+      cancelled: false,
+    };
+    prospectChatTurnRef.current = turn;
+    setProspectChatTurn({ ...turn });
     setProspectChatLoading(true);
     setProspectError("");
+    setProspectNotice("");
     setProspectChatMessages((current) => [
       ...current,
       { role: "seller", text: normalizedQuestion },
@@ -1713,23 +1734,46 @@ export default function MiAgentPage({
       );
       const jobId = Number(response.data?.job?.id || 0);
       if (!jobId) throw new Error("No se pudo iniciar el turno de chat");
+      turn.jobId = jobId;
+      setProspectChatTurn({ ...turn });
 
+      // A turn runs until the server finishes it, fails it or the user cancels it; only a long silence ends the wait.
       let completedJob = null;
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        const jobResponse = await api.get(
-          `/api/prospect-research/sessions/${sessionId}/chat/jobs/${jobId}`,
-        );
-        const job = jobResponse.data?.job;
+      let transientFailures = 0;
+      const deadline = Date.now() + PROSPECT_CHAT_MAX_WAIT_MS;
+      for (let attempt = 0; Date.now() < deadline; attempt += 1) {
+        if (turn.cancelled) return;
+        let job = null;
+        try {
+          const jobResponse = await api.get(
+            `/api/prospect-research/sessions/${sessionId}/chat/jobs/${jobId}`,
+          );
+          job = jobResponse.data?.job;
+          transientFailures = 0;
+        } catch (pollError) {
+          const status = Number(pollError?.response?.status || 0);
+          transientFailures += 1;
+          if ((status >= 400 && status < 500) || transientFailures > 5) {
+            throw pollError;
+          }
+        }
+        if (turn.cancelled) return;
         if (job?.status === "completed") {
           completedJob = job;
           break;
+        }
+        if (job?.status === "cancelled") {
+          discardCancelledProspectTurn(turn);
+          return;
         }
         if (job?.status === "failed") {
           throw new Error(
             job.errorMessage || "No fue posible responder sobre el prospecto",
           );
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 600));
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, attempt < 10 ? 600 : 1500),
+        );
       }
       if (!completedJob?.result) {
         throw new Error("La respuesta tardó demasiado; inténtalo de nuevo");
@@ -1755,6 +1799,7 @@ export default function MiAgentPage({
           : current,
       );
     } catch (requestError) {
+      if (turn.cancelled) return;
       setProspectError(
         getApiErrorMessage(
           requestError,
@@ -1762,7 +1807,47 @@ export default function MiAgentPage({
         ),
       );
     } finally {
+      prospectChatTurnRef.current = null;
+      setProspectChatTurn(null);
       setProspectChatLoading(false);
+    }
+  }
+
+  // A cancelled or refused turn leaves no trace in the conversation: the question goes back to the input.
+  function restoreProspectQuestion(question) {
+    setProspectChatMessages((current) => {
+      const last = current[current.length - 1];
+      return last?.role === "seller" && last.text === question
+        ? current.slice(0, -1)
+        : current;
+    });
+    setProspectChatQuestion(question);
+  }
+
+  function discardCancelledProspectTurn(turn) {
+    turn.cancelled = true;
+    restoreProspectQuestion(turn.question);
+    setProspectNotice("Pregunta cancelada. Tu pregunta volvió al cuadro de texto.");
+  }
+
+  async function cancelProspectChat() {
+    const turn = prospectChatTurnRef.current;
+    if (!turn?.jobId || turn.cancelled || prospectChatCanceling) return;
+    setProspectChatCanceling(true);
+    try {
+      const response = await api.post(
+        `/api/prospect-research/sessions/${Number(prospectSession.id)}/chat/jobs/${turn.jobId}/cancel`,
+      );
+      // A turn that finished first is shown by the polling loop instead of being discarded.
+      if (response.data?.job?.status === "cancelled") {
+        discardCancelledProspectTurn(turn);
+      }
+    } catch (requestError) {
+      setProspectError(
+        getApiErrorMessage(requestError, "No fue posible cancelar la pregunta"),
+      );
+    } finally {
+      setProspectChatCanceling(false);
     }
   }
 
@@ -4506,6 +4591,10 @@ export default function MiAgentPage({
           openCustomerChatOperation={openCustomerChatOperation}
           openSavedProspect={openSavedProspect}
           prospectChatLoading={prospectChatLoading}
+          prospectChatTurn={prospectChatTurn}
+          prospectChatCanceling={prospectChatCanceling}
+          prospectNotice={prospectNotice}
+          cancelProspectChat={cancelProspectChat}
           prospectChatMessages={prospectChatMessages}
           prospectChatQuestion={prospectChatQuestion}
           prospectContactDrafts={prospectContactDrafts}

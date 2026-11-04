@@ -91,6 +91,13 @@ export function describeSessionForJudge(session) {
     })),
     outreachDraft: session.result?.outreach || null,
     crmContext: session.crm || null,
+    library: session.libraryAssets
+      ? session.libraryAssets.map((asset) => ({
+          title: asset.title, type: asset.assetTypeLabel, summary: asset.summary, whenToUse: asset.usageNote,
+          audience: asset.visibilityLevel === "client_safe" ? "para cliente" : "solo interno", shareable: Boolean(asset.isShareable),
+        }))
+      : null,
+    libraryAccess: session.libraryDenied ? "not_authorized" : session.libraryAssets ? "authorized" : null,
   };
 }
 

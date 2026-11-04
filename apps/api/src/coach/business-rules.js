@@ -1,5 +1,6 @@
 import { query, withTransaction } from "../db.js";
 import { getCustomerServerPolicy } from "./server-policy.js";
+import { getProspectServerPolicy } from "./prospect-server-policy.js";
 
 const COACH_BASE_RULES = Object.freeze({
   channel: "coach",
@@ -218,6 +219,8 @@ function getChannelBaseRules(channel) {
         opportunitySearchAllowed: false,
         contactSearchAllowed: false,
         quotationSearchAllowed: false,
+        libraryMaterialsAllowed: true,
+        similarCustomersAllowed: true,
       },
       operationPolicy: {
         sourceChannel: channel,
@@ -500,7 +503,9 @@ export function normalizeCoachBusinessRules({
     process: normalizedProcess,
     ...(channel === "customer_account"
       ? { serverPolicy: getCustomerServerPolicy(overrides) }
-      : {}),
+      : channel === "prospect"
+        ? { serverPolicy: getProspectServerPolicy(overrides) }
+        : {}),
     operationPolicy: {
       ...baseRules.operationPolicy,
       ...(overrides.operationPolicy || {}),

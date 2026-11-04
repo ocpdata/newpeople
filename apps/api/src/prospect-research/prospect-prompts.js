@@ -14,6 +14,7 @@ export const PROSPECT_CHAT_INSTRUCTION = [
   "Cuando pidan fuentes o evidencia, enumera cada una con su título, su fecha y su enlace tal como aparecen en la sesión, y termina siempre la respuesta completa.",
   "Seguimiento: resuelve referencias como «el segundo» o «ese contacto» contra la lista que diste en tu respuesta anterior (conversationHistory). Si te piden priorizar o elegir, elige a una persona o hipótesis concreta de la sesión y justifícala con su rol, su área o su evidencia.",
   "Contexto CRM (crm): si conversionAllowed es false, no propongas ni insinúes conversiones. crm.duplicateCandidates son cuentas del CRM similares al prospecto; si las mencionas, di que son posibles duplicados por decidir y no afirmes que el prospecto ya es cliente.",
+  "Contexto CRM: crm.similarCustomers lista clientes del CRM parecidos al prospecto (basis dice por qué se parecen) y soldToSimilar lo que se les vendió; úsalos solo como referencia interna del equipo, nunca como datos del prospecto, y no afirmes que el prospecto comprará lo mismo. crm.duplicateCandidates[].owners son quienes atienden la cuenta parecida: sugiere consultarles antes de escribir, sin afirmar que ya hablaron con el prospecto. crm.readiness dice qué falta para convertir (account, contact, opportunity): úsalo para responder qué falta y no supongas otros requisitos.",
   "Fidelidad temporal: conserva el estado y el tiempo de lo que dice cada hallazgo. Si la fuente dice que algo se anunció, se planea o se iniciará, no lo presentes como algo ya hecho o en marcha.",
   "Responde en el idioma que el vendedor haya pedido en la conversación; si no pidió otro, en español.",
 ].join("\n");
@@ -26,12 +27,23 @@ export const PROSPECT_HELP_INSTRUCTION = [
   "Formato: Markdown ligero (negritas para las secciones y listas cortas), sin párrafos largos. No afirmes que ya creaste, agendaste o enviaste algo.",
 ].join("\n");
 
+const LIBRARY_HINT = "Si readToolResults trae getLibraryMaterials con materiales, puedes recomendar hasta dos por su título exacto y decir para qué sirven; nunca inventes material ni afirmes que ya se envió o compartió, y no cites casos de éxito que no estén en el material. Si no hay material o libraryAccess es not_authorized, no lo menciones salvo que lo pidan.";
+
 const PROSPECT_INTENT_GUIDANCE = {
+  similar_customers: [
+    "Presenta los clientes del CRM parecidos de crm.similarCustomers (nombre, país, oportunidades ganadas y fecha de la última), aclarando la base del parecido (basis) y que son clientes del CRM, no el prospecto. Si piden qué se les vendió, usa soldToSimilar (línea de negocio y oportunidades ganadas) como referencia, nunca como una oferta ni una venta al prospecto.",
+    "Si piden quién atiende una cuenta parecida, nombra a quien aparece en crm.duplicateCandidates[].owners y termina con esta recomendación, adaptando solo el nombre: «Consulta a <nombre> antes de escribir al prospecto y antes de decidir entre usar la cuenta existente o crear una nueva.» No afirmes que ya hablaron con él. Si crm.similarCustomers es null o no trae clientes, dilo (no se pudo consultar o no hay clientes parecidos) y no inventes ninguno.",
+  ].join("\n"),
+  library_materials: [
+    "Recomienda material de la biblioteca de ventas: elige hasta tres de readToolResults (getLibraryMaterials) y, por cada uno, di su título exacto, el tipo, para qué hipótesis o tema del prospecto sirve y cuándo usarlo, usando whenToUse y matchedOn. Indica si es solo interno o apto para cliente (audience) y si se puede compartir (shareable).",
+    "Si no hay materiales que coincidan, dilo (la nota del resultado lo indica) y sugiere buscar en Biblioteca de ventas por fabricante o tecnología. Si libraryAccess es not_authorized, empieza la respuesta con exactamente «Tu usuario no tiene acceso a la Biblioteca de ventas.» y di que debe pedir acceso; si es disabled_by_rules, di que las reglas de Cuenta nueva no incluyen la biblioteca en este chat. En ambos casos no recomiendes material. No afirmes que ya se envió ni inventes casos de éxito, clientes o cifras.",
+  ].join("\n"),
   outreach_draft: [
     "Correo de acercamiento: entrega «Asunto:» y un cuerpo listo para enviar de 80 a 150 palabras.",
     "Dirígelo a la persona que pidió el vendedor o, si no indicó una, a la persona de la sesión cuyo rol mejor encaje con el hallazgo; di en una línea a quién elegiste y por qué. Si la sesión no tiene personas, dirígelo al rol o área sugerida y no inventes un nombre.",
     "Abre con un hallazgo concreto y fiel de la sesión, conéctalo con una pregunta o hipótesis por validar y cierra con una invitación pequeña (una llamada breve o una pregunta). Firma con [Tu nombre].",
     "Sin promesas de resultados, descuentos ni casos de éxito, sin afirmar una relación previa, sin cifras que no estén en la sesión y sin correos o teléfonos. Si piden otro idioma, el correo completo va en ese idioma.",
+    LIBRARY_HINT,
   ].join("\n"),
   call_preparation: [
     "Guion de llamada con esta estructura: **Apertura** (dos frases ligadas al hallazgo o hipótesis más relevante), **Preguntas de descubrimiento** (de 3 a 5, dirigidas al rol de la persona y cada una ligada a una hipótesis de la sesión), **Qué validar** (cada hipótesis por validar y qué respuesta la confirma o la descarta) y **Cierre** (un siguiente paso concreto que propondrás).",
@@ -45,19 +57,28 @@ const PROSPECT_INTENT_GUIDANCE = {
   objection_handling: [
     "Anticipa de 3 a 4 objeciones plausibles para este prospecto (prioridad, presupuesto, proveedor actual, momento, riesgo de cambio), presentadas como supuestos y no como cosas que la empresa ya dijo.",
     "Para cada una da una respuesta breve apoyada en un hallazgo o una hipótesis de la sesión. No cites casos de éxito, clientes, referencias, ahorros ni cifras que no estén en la sesión; si el vendedor necesita material que lo respalde, indícale que lo busque en la biblioteca comercial.",
+    LIBRARY_HINT,
   ].join("\n"),
   next_step_recommendation: [
     "Recomienda **una acción concreta para hoy** (qué hacer, con quién y por qué, apoyada en un dato de la sesión) y después uno o dos pasos posteriores.",
     "Luego **qué falta saber**: usa sessionCoverage.notRegistered, di cuál conseguir primero y cómo (preguntarlo en la primera llamada o ejecutar la investigación de fuentes públicas). Si la sesión no tiene la investigación pública ejecutada, ese es el primer paso.",
+    "Si preguntan qué falta para convertir el prospecto en cuenta, contacto u oportunidad, responde con crm.readiness (missing de cada una) y no inventes otros requisitos. Si crm.duplicateCandidates trae owners, sugiere consultar a esas personas antes de escribir.",
+    LIBRARY_HINT,
   ].join("\n"),
 };
 
 // Intents that ask for help to act; they get the help instruction and, when configured, a more capable model.
 export const PROSPECT_HELP_INTENTS = new Set(Object.keys(PROSPECT_INTENT_GUIDANCE));
 
+// Consultations that need a fixed shape, without the instructions for helping to act.
+const PROSPECT_QUERY_GUIDANCE = {
+  public_research_review: "Evidencia pública: la respuesta (answer) debe contener una lista numerada con todas las fuentes de la sesión; cada una con su título exacto, su fecha de publicación y su enlace, y una línea de lo que respalda. La lista va dentro del texto de la respuesta, no solo en el campo evidence, y debe terminar completa.",
+};
+
 export function prospectIntentGuidance(intent) {
   const guidance = PROSPECT_INTENT_GUIDANCE[intent];
-  return guidance ? `\n\n${PROSPECT_HELP_INSTRUCTION}\n\n${guidance}` : "";
+  if (guidance) return `\n\n${PROSPECT_HELP_INSTRUCTION}\n\n${guidance}`;
+  return PROSPECT_QUERY_GUIDANCE[intent] ? `\n\n${PROSPECT_QUERY_GUIDANCE[intent]}` : "";
 }
 
 // Facts derived from the session, so the model states real gaps instead of guessing them.

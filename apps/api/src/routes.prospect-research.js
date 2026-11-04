@@ -9,6 +9,7 @@ import {
   convertProspectHypothesisToOpportunity,
   convertProspectSessionToAccount,
   convertProspectSessionToLead,
+  cancelProspectChatJob,
   createProspectExternalResearchRun,
   createProspectChatJob,
   createProspectResearchSession,
@@ -306,6 +307,32 @@ router.get(
       return res.status(404).json({ message: "Job de chat no encontrado" });
     }
     return res.json({ job });
+  },
+);
+
+router.post(
+  "/sessions/:sessionId/chat/jobs/:jobId/cancel",
+  requirePermission("prospeccion.read"),
+  async (req, res) => {
+    const sessionId = Number(req.params.sessionId || 0);
+    const jobId = Number(req.params.jobId || 0);
+    if (
+      !Number.isInteger(sessionId) ||
+      sessionId <= 0 ||
+      !Number.isInteger(jobId) ||
+      jobId <= 0
+    ) {
+      return res.status(400).json({ message: "Sesion o job invalido" });
+    }
+    try {
+      const job = await cancelProspectChatJob({ user: req.user, sessionId, jobId });
+      if (!job) {
+        return res.status(404).json({ message: "Job de chat no encontrado" });
+      }
+      return res.json({ job });
+    } catch (error) {
+      return sendRouteError(res, error, "No fue posible cancelar la pregunta");
+    }
   },
 );
 

@@ -5,6 +5,11 @@ import {
   CUSTOMER_SERVER_RULE_CATEGORIES,
   CUSTOMER_OPERATION_KINDS,
 } from "../../api/src/coach/server-policy.js";
+import {
+  PROSPECT_OPERATION_KINDS,
+  PROSPECT_SERVER_POLICY_DEFAULTS,
+  PROSPECT_SERVER_RULE_CATEGORIES,
+} from "../../api/src/coach/prospect-server-policy.js";
 
 async function mockMiCoachApi(
   page,
@@ -177,6 +182,16 @@ async function mockMiCoachApi(
     rules: structuredClone(initialServerRules), initialRules: initialServerRules,
     categories: CUSTOMER_SERVER_RULE_CATEGORIES, revisions: [],
   };
+  const initialProspectRules = {
+    scope: { libraryMaterialsAllowed: true, similarCustomersAllowed: true },
+    operationPolicy: { allowedKinds: [...PROSPECT_OPERATION_KINDS] },
+    serverPolicy: { ...PROSPECT_SERVER_POLICY_DEFAULTS },
+  };
+  const prospectServerRules = {
+    channel: "prospect", process: "default", version: 0, connected: true,
+    rules: structuredClone(initialProspectRules), initialRules: initialProspectRules,
+    categories: PROSPECT_SERVER_RULE_CATEGORIES, revisions: [],
+  };
   let customerSnapshot;
   await page.context().route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -188,6 +203,18 @@ async function mockMiCoachApi(
         contentType: "application/json",
         body: JSON.stringify(body),
       });
+    if (pathname === "/api/commercial-intelligence/governance/server-rules/prospect" && method === "GET") {
+      return json(prospectServerRules);
+    }
+    if (pathname === "/api/commercial-intelligence/governance/server-rules/prospect" && method === "PUT") {
+      const input = route.request().postDataJSON();
+      if (input.expectedVersion !== prospectServerRules.version) {
+        return json({ message: "Las reglas cambiaron. Recarga antes de guardar." }, 409);
+      }
+      prospectServerRules.rules = input.rules;
+      prospectServerRules.version += 1;
+      return json(prospectServerRules);
+    }
     if (pathname === "/api/commercial-intelligence/governance/server-rules" && method === "GET") {
       return json(serverRules);
     }
@@ -4047,6 +4074,65 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toHaveCount(0);
   });
 
+  test("Cuenta nueva ofrece preguntas sugeridas, campo multilínea y cancelar un turno", async ({
+    page,
+  }) => {
+    await mockMiCoachApi(page, { withProspect: true });
+    const prospectChatJobRequests = [];
+    let cancelRequests = 0;
+    let cancelled = false;
+    await page.route(/\/api\/prospect-research\/sessions\/\d+\/chat\/jobs\/\d+\/cancel$/, (route) => {
+      cancelRequests += 1;
+      cancelled = true;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ job: { id: 992, status: "cancelled" } }),
+      });
+    });
+    await page.route(/\/api\/prospect-research\/sessions\/\d+\/chat\/jobs\/\d+$/, (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ job: { id: 992, status: cancelled ? "cancelled" : "running" } }),
+      });
+    });
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().endsWith("/chat/jobs")
+      ) {
+        prospectChatJobRequests.push(request.postDataJSON());
+      }
+    });
+    await openMiCoach(page, { workspace: "prospect" });
+    await page.getByPlaceholder("Nombre de la empresa").fill("Prospecto E2E");
+    await page.getByPlaceholder("México, Perú, Colombia...").fill("Mexico");
+    await page
+      .getByRole("button", { name: "Investigar fuentes públicas" })
+      .click();
+
+    const suggestions = page.getByRole("group", { name: "Preguntas sugeridas" });
+    await expect(suggestions.getByRole("button")).toHaveCount(6);
+    const question = page.getByRole("textbox", { name: "Pregunta sobre el prospecto" });
+    await expect(question).toHaveJSProperty("tagName", "TEXTAREA");
+    await question.fill("Primera línea");
+    await question.press("Enter");
+    await question.pressSequentially("Segunda línea");
+    await expect(question).toHaveValue("Primera línea\nSegunda línea");
+    await question.fill("");
+
+    await suggestions.getByRole("button", { name: "Preparar llamada" }).click();
+    await expect.poll(() => prospectChatJobRequests.length).toBe(1);
+    expect(prospectChatJobRequests[0].question).toContain("llamada de descubrimiento");
+    await expect(page.getByText("Preparando la respuesta con la sesión…")).toBeVisible();
+    await page.getByRole("button", { name: "Cancelar pregunta" }).click();
+    await expect.poll(() => cancelRequests).toBe(1);
+    await expect(page.getByText("Pregunta cancelada. Tu pregunta volvió al cuadro de texto.")).toBeVisible();
+    await expect(question).toHaveValue(/llamada de descubrimiento/);
+    await expect(page.getByRole("button", { name: "Cancelar pregunta" })).toHaveCount(0);
+    await expect(page.locator(".mi-agent-coach-message.is-seller")).toHaveCount(0);
+  });
+
   test("Cliente existente confirma create_contact y entrega el borrador a Contactos", async ({
     page,
   }) => {
@@ -5338,7 +5424,7 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
   });
 
-  test("administra reglas del servidor en nueve categorias, guarda y restaura versiones solo en Cliente existente", async ({ page }) => {
+  test("administra reglas del servidor en nueve categorias, guarda y restaura versiones en Cliente existente y administra las de Cuenta nueva", async ({ page }) => {
     await mockMiCoachApi(page, { canAdmin: true });
     await openMiCoach(page);
     await page.getByRole("button", { name: "Administración" }).click();
@@ -5374,7 +5460,35 @@ test.describe("Mi Coach governance and workspaces", () => {
     await expect(section.getByText("Este canal está preparado", { exact: false })).toBeVisible();
     await expect(section.getByRole("button", { name: "Guardar reglas del servidor", exact: true })).toHaveCount(0);
     await section.getByLabel("Canal de reglas del servidor").selectOption("prospect");
-    await expect(section.getByText("todavía no modifica sus flujos", { exact: false })).toBeVisible();
+    await expect(section.getByText("Versión 0", { exact: true })).toBeVisible();
+    await expect(section.getByText("prospect / default", { exact: false })).toBeVisible();
+    await expect(section.locator(".mi-agent-server-rule-category")).toHaveCount(6);
+    await section.getByText("2. Herramientas y contexto", { exact: true }).click();
+    const library = section.getByLabel("Material de la biblioteca comercial");
+    await expect(library).toBeChecked();
+    await library.uncheck();
+    await section.getByText("3. Conversiones al CRM", { exact: true }).click();
+    await section.getByRole("checkbox", { name: "Crear oportunidad" }).uncheck();
+    await section.getByText("4. Interpretación y respuesta", { exact: true }).click();
+    await section.getByLabel("Nivel de modelo para ayuda").selectOption("fast");
+    const prospectSave = page.waitForRequest((req) => req.method() === "PUT" &&
+      req.url().endsWith("/governance/server-rules/prospect"));
+    await section.getByRole("button", { name: "Guardar reglas del servidor", exact: true }).click();
+    expect((await prospectSave).postDataJSON()).toMatchObject({
+      expectedVersion: 0,
+      rules: {
+        scope: { libraryMaterialsAllowed: false, similarCustomersAllowed: true },
+        operationPolicy: { allowedKinds: ["create_account", "create_contact"] },
+        serverPolicy: { helpModelRole: "fast", semanticClassifier: "on", maxHistoryMessages: 16 },
+      },
+    });
+    await expect(section.getByRole("status")).toContainText("Versión 1 guardada. Se aplicará en el siguiente turno de Cuenta nueva.");
+    await section.getByText("5. Verificación de la respuesta", { exact: true }).click();
+    const verification = section.locator(".mi-agent-server-rule").filter({
+      has: page.getByText("Datos de la respuesta contra la sesión", { exact: true }),
+    });
+    await expect(verification.getByText("Control protegido", { exact: false })).toBeVisible();
+    await expect(verification.locator("input, select")).toHaveCount(0);
     await section.getByLabel("Canal de reglas del servidor").selectOption("customer_account");
     await section.getByText("1. Acceso, solicitud y sesión", { exact: true }).click();
     const protectedRule = section.locator(".mi-agent-server-rule").filter({
@@ -5913,20 +6027,12 @@ test.describe("Mi Coach governance and workspaces", () => {
     ).toBeVisible();
     await expect(consultationType).toHaveCount(0);
     await prospectRulesRequest;
-    const prospectSaveRequest = page.waitForRequest(
-      (request) =>
-        request
-          .url()
-          .endsWith("/api/commercial-intelligence/governance/business-rules") &&
-        request.method() === "PUT",
-    );
-    await channelPolicy
-      .getByRole("button", { name: "Guardar políticas del canal" })
-      .click();
-    expect((await prospectSaveRequest).postDataJSON()).toMatchObject({
-      channel: "prospect",
-      process: "default",
-    });
+    await expect(
+      channelPolicy.getByRole("link", { name: "Reglas del servidor" }),
+    ).toBeVisible();
+    await expect(
+      channelPolicy.getByRole("button", { name: "Guardar políticas del canal" }),
+    ).toHaveCount(0);
 
     const externalSources = page.getByLabel("Fuentes externas habilitadas");
     const wonOpportunities = page.getByLabel("Incluir oportunidades ganadas");

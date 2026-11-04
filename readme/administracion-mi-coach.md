@@ -21,10 +21,30 @@ codigo. La seccion usa la configuracion existente `customer_account/default` de
 `mi_coach_business_rules`: no mantiene una segunda copia de dominios, filtros u
 operaciones. Conserva las personalizaciones y los alias existentes.
 
-**Coach** y **Cuenta nueva** aparecen como **pendientes de conexion**. No consumen
-esta nueva politica; sus configuraciones y flujos actuales no se modifican. El
-catalogo y el contrato de administracion estan separados del adaptador, preparados
-para extenderlos por canal en una etapa posterior.
+**Coach** aparece como **pendiente de conexion**: no consume esta nueva politica y su
+configuracion y flujos actuales no se modifican. El catalogo y el contrato de
+administracion estan separados del adaptador, preparados para extenderlos por canal
+en una etapa posterior.
+
+**Cuenta nueva** esta **conectada** con su propia politica (`prospect/default`), con
+version, historial y restauracion como la de Cliente existente, y con las mismas
+tablas de version bajo su propio canal: guardar una no toca la otra. Se administra en
+cinco categorias (acceso y sesion, herramientas y contexto, conversiones al CRM,
+interpretacion y respuesta, verificacion). Es editable: el material de la biblioteca
+comercial, los clientes parecidos del CRM, las conversiones que puede proponer
+(cuenta, contacto u oportunidad), el clasificador con IA (`on`/`off`), el nivel de
+modelo para respuestas de ayuda (`fast`/`advanced`) y los mensajes de memoria (2 a
+16). Son controles protegidos, sin interruptor: los permisos, que los datos de
+prospeccion no se presenten como CRM, que el servidor construya las operaciones y
+que toda conversion requiera confirmacion, y la verificacion de la respuesta contra
+la sesion. Las politicas del canal antiguas (`PUT`/`DELETE /governance/business-rules`
+con `channel=prospect`) responden `409` y remiten a esta seccion para no sobrescribir
+una version.
+
+El **rollout por canal** (Coach y Cuenta nueva) se configura en la misma
+administracion, pero **no limita el chat de Cuenta nueva**: esta disponible para todos
+los usuarios con `prospeccion.read`, aunque el rollout del canal este apagado o en un
+porcentaje menor. El rollout de Coach todavia solo se configura: no limita su chat.
 
 La pantalla organiza el inventario funcional en nueve categorias. Cada regla tiene
 un identificador estable y distingue:
