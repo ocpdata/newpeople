@@ -41,7 +41,7 @@ async function loadUsage({ since, userId }) {
     `SELECT COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
             COALESCE(SUM(cost_micros), 0) AS cost_micros, GROUP_CONCAT(DISTINCT CONCAT(feature_code, ':', model)) AS models
      FROM ai_usage_ledger
-     WHERE user_id = ? AND created_at_utc >= ? AND feature_code IN ('prospect_research.chat', 'prospect_chat.acceptance_judge')`,
+     WHERE user_id = ? AND created_at_utc >= ? AND feature_code IN ('prospect_research.chat', 'prospect_research.chat_classifier', 'prospect_chat.acceptance_judge')`,
     [Number(userId), since],
   );
   return {

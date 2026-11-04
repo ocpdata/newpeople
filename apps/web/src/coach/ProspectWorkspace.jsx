@@ -6,6 +6,7 @@ import {
 } from "./miAgentConstants";
 import { CoachQualityFeedback } from "./CoachQualityFeedback";
 import { ChannelTurnFeedback } from "./ChannelTurnFeedback";
+import { CustomerChatAnswer } from "./CustomerChatAnswer";
 import { isProspectConversionAction, isProspectConversionOperation } from "./miAgentHelpers";
 import { CheckCircle2 } from "lucide-react";
 import { CUSTOMER_FINDING_CONFIDENCE_LABELS } from "./customerChatShared";
@@ -425,7 +426,11 @@ export function ProspectWorkspace({ askProspectChat, canCreateAccounts, canCreat
                     <span>
                       {message.role === "seller" ? "Vendedor" : "Prospecto"}
                     </span>
-                    <p>{message.text || message.answer}</p>
+                    {message.role === "seller" ? (
+                      <p>{message.text || message.answer}</p>
+                    ) : (
+                      <CustomerChatAnswer answer={message.text || message.answer} />
+                    )}
                     <CoachQualityFeedback
                       traceId={message.qualityTraceId}
                     />

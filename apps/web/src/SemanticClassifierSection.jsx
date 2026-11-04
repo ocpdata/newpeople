@@ -139,8 +139,6 @@ export default function SemanticClassifierSection() {
               : "Configuración preparada · sin efecto en ejecución. Guardar no conecta este canal."}</p>
             {prompt.channel === "coach" ? (
               <p>El clasificador actual de Coach continúa usando sus instrucciones existentes.</p>
-            ) : prompt.channel === "prospect" ? (
-              <p>Texto propuesto para uso futuro; no implica un clasificador conectado.</p>
             ) : null}
             <p>
               {prompt.source === "default" ? "Versión inicial" : `Versión ${prompt.version}`}

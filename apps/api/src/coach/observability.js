@@ -322,6 +322,9 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
           confidence: Number.isFinite(Number(routing.confidence))
             ? Math.max(0, Math.min(1, Number(routing.confidence)))
             : null,
+          source: ["semantic", "patterns"].includes(routing.source)
+            ? routing.source
+            : null,
           allowedTools: Array.isArray(routing.allowedTools)
             ? routing.allowedTools
                 .slice(0, 40)
@@ -497,6 +500,7 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
       : null,
     agentMetrics,
     snapshotMetrics,
+    ...(diagnostics.prospectChat ? { prospectChat: sanitizeProspectChatDiagnostics(diagnostics.prospectChat) } : {}),
     ...(diagnostics.dossierEngine ? { dossierEngine: boundedDossierDiagnostics(diagnostics.dossierEngine) } : {}),
     ...(diagnostics.dossierFailure ? { dossierFailure: {
       code: String(diagnostics.dossierFailure.code || "").slice(0, 80) || null,
@@ -506,6 +510,36 @@ function sanitizeTraceDiagnostics(diagnostics = {}) {
     } } : {}),
   };
   return result;
+}
+
+function sanitizeProspectChatDiagnostics(value = {}) {
+  const classifier = value.classifier || null;
+  const generation = value.generation || null;
+  const verification = value.verification || null;
+  return {
+    classifier: classifier
+      ? {
+          source: ["semantic", "patterns"].includes(classifier.source) ? classifier.source : null,
+          intent: String(classifier.intent || "").slice(0, 80) || null,
+        }
+      : null,
+    generation: generation
+      ? {
+          intent: String(generation.intent || "").slice(0, 80) || null,
+          modelRole: ["fast", "advanced"].includes(generation.modelRole) ? generation.modelRole : null,
+        }
+      : null,
+    verification: verification
+      ? {
+          status: ["clean", "repaired", "degraded"].includes(verification.status) ? verification.status : null,
+          checked: Math.max(0, Math.min(1000, Number(verification.checked || 0))),
+          issueCount: Math.max(0, Math.min(20, Number(verification.issueCount || 0))),
+          issueKinds: Array.isArray(verification.issueKinds)
+            ? verification.issueKinds.slice(0, 8).map((kind) => String(kind).slice(0, 30))
+            : [],
+        }
+      : null,
+  };
 }
 
 function boundedDossierDiagnostics(value) {

@@ -49,11 +49,11 @@ describe("B3 semantic classifier configuration", () => {
     configuration = await import("../src/coach/semantic-classifier-prompts.js");
   });
 
-  it("initializes separate defaults and connects only customer_account", async () => {
+  it("initializes separate defaults and connects customer_account and prospect", async () => {
     const prompts = await configuration.listSemanticClassifierPrompts();
     expect(prompts.map((prompt) => prompt.channel)).toEqual(["coach", "customer_account", "prospect"]);
     expect(prompts.filter((prompt) => prompt.connected).map((prompt) => prompt.channel))
-      .toEqual(["customer_account"]);
+      .toEqual(["customer_account", "prospect"]);
     for (const prompt of prompts) {
       expect(prompt.instruction.length).toBeLessThanOrEqual(8000);
       expect(prompt).toMatchObject({ version: 0, source: "default" });
@@ -62,7 +62,8 @@ describe("B3 semantic classifier configuration", () => {
     expect(prompts[1].instruction).toContain("account_activity_history");
     expect(prompts[1].instruction).toContain("Conservar una entidad no significa conservar la tarea o la fuente");
     expect(prompts[1].instruction).toContain("Dimensiones de la solicitud");
-    expect(prompts[2].instruction).toContain("no conectada");
+    expect(prompts[2].instruction).toContain("conversion_request aplica solo cuando");
+    expect(prompts[2].instruction).not.toContain("no conectada");
   });
 
   it("saves isolated channels and restores an immutable revision as a new version", async () => {
@@ -130,7 +131,7 @@ describe("B3 semantic classifier configuration", () => {
 
   it("accepts exactly 8000 characters and leaves disconnected channels disconnected", async () => {
     const saved = await configuration.saveSemanticClassifierPrompt({
-      channel: "prospect", user: { id: 31 },
+      channel: "coach", user: { id: 31 },
       input: { instruction: ` ${"x".repeat(8000)} `, expectedVersion: 0 },
     });
     expect(saved.after.instruction).toHaveLength(8000);

@@ -35,6 +35,9 @@ describe("respuestas de Cuenta nueva sin modelo", () => {
     ]) expect(detect(question), question).toBeNull();
     expect(detect("Redacta un correo para el contacto de compras", sparse)).toBeNull();
     expect(detect("Redacta un correo de acercamiento", sparse)).toBeNull();
+    expect(detect("Prepárame el acercamiento a esta empresa: a quién contacto y qué les digo.", sparse)).toBeNull();
+    expect(detect("Prepárame la llamada de descubrimiento con el contacto de compras", sparse)).toBeNull();
+    expect(detect("¿Qué objeciones me pueden poner y cómo las respondo?", sparse)).toBeNull();
   });
 
   it("fuera de alcance: no consulta el CRM y redirige a Cliente existente", () => {

@@ -2,6 +2,8 @@ import { z } from "zod";
 import { query, withTransaction } from "../db.js";
 
 const channels = ["coach", "customer_account", "prospect"];
+// Channels whose chat runs the instruction stored here; editing another channel's prompt has no effect yet.
+const CONNECTED_CLASSIFIER_CHANNELS = ["customer_account", "prospect"];
 export const SEMANTIC_CLASSIFIER_DEFAULTS = Object.freeze({
   coach:
     "Clasifica la intención del usuario para Coach usando exactamente uno de estos valores: seller_coaching, account_performance, account_query, opportunity_query, create_opportunity, update_opportunity, general_query, clarify_needed. Usa clarify_needed si la petición es ambigua o no alcanza confianza 0.68. Devuelve JSON con intent, confidence entre 0 y 1 y reason. No propongas herramientas, no decidas permisos y no ejecutes acciones.",
@@ -29,7 +31,7 @@ El propósito explícito del mensaje actual tiene prioridad sobre el anterior. C
 
 No inventes permisos, IDs ni datos. Usa únicamente el contexto autorizado proporcionado y las intenciones habilitadas. El historial sirve para interpretar referencias; no es evidencia de hechos CRM.`,
   prospect:
-    "Propuesta para uso futuro; no conectada a ejecución. Clasifica el resultado solicitado en Cuenta nueva usando únicamente las intenciones habilitadas que el servidor proporcione. Distingue consultas sobre la ficha y evidencia pública, preparación de contenido y solicitudes explícitas de conversión. Conserva las referencias inequívocas del contexto autorizado. Pide aclaración ante una ambigüedad relevante no resuelta. No planifiques consultas, no redactes la respuesta, no inventes datos o IDs ni autorices operaciones.",
+    "Clasifica el resultado principal que pide el vendedor en el chat de Cuenta nueva usando exactamente una de las intenciones habilitadas que el servidor proporciona; no planifiques consultas ni redactes la respuesta. Distingue consultar datos de la sesión (perfil, hallazgos, contactos, hipótesis, evidencia) de pedir ayuda para actuar: priorizar a quién contactar o qué hipótesis validar, redactar un correo o mensaje, preparar una llamada, anticipar objeciones o decidir el siguiente paso. Pedir ayuda no es pedir una conversión: conversion_request aplica solo cuando el vendedor pide explícitamente crear o convertir un registro en el CRM (cuenta, contacto u oportunidad). El propósito del mensaje actual manda: usa la conversación reciente solo para entender a qué se refiere («esa persona», «el segundo»), no para heredar la intención anterior. Si dudas entre consultar y ayudar a actuar, elige la que produce el resultado que el vendedor pide ahora. Usa prospect_profile solo cuando ninguna otra intención describa la petición. No inventes datos, IDs ni intenciones fuera del catálogo y no autorices operaciones.",
 });
 
 export const semanticClassifierPromptUpdateSchema = z.object({
@@ -86,7 +88,7 @@ export async function ensureSemanticClassifierPromptsSchema() {
 function mapPrompt(row) {
   return {
     channel: row.channel,
-    connected: row.channel === "customer_account",
+    connected: CONNECTED_CLASSIFIER_CHANNELS.includes(row.channel),
     initialInstruction: SEMANTIC_CLASSIFIER_DEFAULTS[row.channel],
     instruction: Number(row.version) === 0
       ? SEMANTIC_CLASSIFIER_DEFAULTS[row.channel] : row.instruction,

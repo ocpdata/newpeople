@@ -14,12 +14,12 @@ const turn = {
 };
 
 describe("banco de evaluación de Cuenta nueva", () => {
-  it("tiene 24 escenarios íntegros y los críticos son el 12 al 21", () => {
+  it("tiene 36 escenarios íntegros; los críticos son del 12 al 21 y el 26 y el 32", () => {
     expect(validateBank()).toEqual([]);
-    expect(prospectBank.scenarios).toHaveLength(24);
+    expect(prospectBank.scenarios).toHaveLength(36);
     expect(prospectBank.scenarios.filter((item) => item.critical).map((item) => item.id))
-      .toEqual(["S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S21"]);
-    expect([...new Set(prospectBank.scenarios.map((item) => item.area))]).toEqual(["A", "B", "C", "D", "E"]);
+      .toEqual(["S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S21", "S26", "S32"]);
+    expect([...new Set(prospectBank.scenarios.map((item) => item.area))]).toEqual(["A", "B", "C", "D", "E", "F"]);
   });
 
   it("detecta ediciones que debilitan el banco", () => {
@@ -164,11 +164,11 @@ describe("ejecución del banco", () => {
 
   it("resume casos, críticos, afirmaciones y áreas, con el detalle de lo que falló", async () => {
     const run = await runProspectBank({ user: { id: 1 }, judgeModel: "m", createAdapter: adapterWith({}), judge: goodJudge, concurrency: 4 });
-    expect(run.scenarios).toHaveLength(24);
+    expect(run.scenarios).toHaveLength(36);
     // Operations are absent in every scenario, so everything passes except those whose deterministic checks cannot pass.
-    expect(run.groups.cases.total).toBe(24);
-    expect(run.groups.critical.total).toBe(10);
-    expect(Object.keys(run.groups)).toEqual(["cases", "critical", "content", "operations", "claims", "area_a", "area_b", "area_c", "area_d", "area_e"]);
+    expect(run.groups.cases.total).toBe(36);
+    expect(run.groups.critical.total).toBe(12);
+    expect(Object.keys(run.groups)).toEqual(["cases", "critical", "content", "operations", "claims", "area_a", "area_b", "area_c", "area_d", "area_e", "area_f"]);
     expect(summarizeProspectRun(run.scenarios).groups.claims.total).toBe(run.groups.claims.total);
   });
 });

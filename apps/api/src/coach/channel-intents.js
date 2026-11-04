@@ -226,6 +226,96 @@ const CHANNEL_INTENTS = Object.freeze({
       priority: 100,
     },
     {
+      code: "call_preparation",
+      label: "Preparación de llamada",
+      description:
+        "Prepara una llamada o reunión: apertura, preguntas de descubrimiento, qué validar y cierre, usando solo la sesión.",
+      tools: [
+        "getProspectProfile",
+        "searchProspectContacts",
+        "searchProspectHypotheses",
+        "searchProspectFindings",
+      ],
+      context: ["prospectSession"],
+      examples: [
+        "Prepárame la llamada de descubrimiento",
+        "Dame un guion para la primera llamada",
+      ],
+      patterns: [
+        /\b(guion|script)\b/,
+        /\b(prepara|preparame|preparar|preparo)\b.*\b(llamada|reunion|visita|conversacion|cita)\b/,
+        /\bpreguntas? de descubrimiento\b/,
+      ],
+      priority: 96,
+    },
+    {
+      code: "contact_prioritization",
+      label: "Priorizar contactos e hipótesis",
+      description:
+        "Recomienda a quién contactar primero, con qué ángulo y qué hipótesis validar primero, justificado con la sesión.",
+      tools: [
+        "getProspectProfile",
+        "searchProspectContacts",
+        "searchProspectHypotheses",
+        "searchProspectFindings",
+      ],
+      context: ["prospectSession"],
+      examples: [
+        "¿A quién contacto primero y por qué?",
+        "¿Por dónde empiezo con este prospecto?",
+      ],
+      patterns: [
+        /\b(a quien|con quien)\b.*\b(contacto|contactar|empiezo|comienzo|abordo|escribo|llamo|hablo)\b/,
+        /\bpor donde (empiezo|comienzo|inicio|arranco|empezar|comenzar)\b/,
+        /\b(prioriza|priorizar|priorizo|priorizame|prioridad)\b/,
+        /\bhipotesis\b.*\b(primero|validar primero)\b/,
+      ],
+      priority: 95,
+    },
+    {
+      code: "objection_handling",
+      label: "Objeciones probables",
+      description:
+        "Anticipa objeciones probables del prospecto y cómo responderlas con lo que hay en la sesión.",
+      tools: [
+        "getProspectProfile",
+        "searchProspectContacts",
+        "searchProspectHypotheses",
+        "searchProspectFindings",
+      ],
+      context: ["prospectSession"],
+      examples: ["¿Qué objeciones me pueden poner y cómo las respondo?"],
+      patterns: [
+        /\bobjecion(es)?\b/,
+        /\bcomo (respondo|contesto|respondemos)\b/,
+      ],
+      priority: 94,
+    },
+    {
+      code: "next_step_recommendation",
+      label: "Siguiente paso y datos faltantes",
+      description:
+        "Recomienda la siguiente acción con el prospecto, qué falta saber y qué investigar, con base en la cobertura de la sesión.",
+      tools: [
+        "getProspectProfile",
+        "searchProspectContacts",
+        "searchProspectHypotheses",
+        "searchProspectFindings",
+      ],
+      context: ["prospectSession"],
+      examples: [
+        "¿Qué hago hoy con este prospecto?",
+        "¿Qué me falta saber antes de proponer una reunión?",
+      ],
+      patterns: [
+        /\b(siguiente|proximo) paso\b/,
+        /\bque hago\b/,
+        /\bque (me )?falta\b/,
+        /\bantes de proponer\b/,
+      ],
+      priority: 93,
+    },
+    {
       code: "outreach_draft",
       label: "Borrador de acercamiento",
       description:
@@ -233,6 +323,7 @@ const CHANNEL_INTENTS = Object.freeze({
       tools: [
         "getProspectProfile",
         "searchProspectContacts",
+        "searchProspectHypotheses",
         "searchProspectFindings",
       ],
       context: ["prospectSession"],
@@ -1338,6 +1429,58 @@ export function classifyChannelIntent({
   const selectedCandidate = candidates[0];
   if (!selectedCandidate) return null;
   const { intent: selected, config } = selectedCandidate;
+  return buildChannelIntentRouting({
+    channel,
+    selected,
+    config,
+    availableTools,
+    context,
+    confidence: 0.95,
+    source: "patterns",
+  });
+}
+
+// Routes an intent the caller already chose (by code) through the same hard tool and context limits as the patterns.
+export function routeChannelIntentByCode({
+  channel,
+  code,
+  availableTools = [],
+  context = {},
+  configuration = null,
+  confidence = 0.75,
+  source = "semantic",
+  reason = "",
+} = {}) {
+  const selected = (CHANNEL_INTENTS[channel] || []).find(
+    (intent) => intent.code === code,
+  );
+  if (!selected) return null;
+  const config = (Array.isArray(configuration) ? configuration : []).find(
+    (item) => item.code === code,
+  );
+  if (config?.enabled === false) return null;
+  return buildChannelIntentRouting({
+    channel,
+    selected,
+    config,
+    availableTools,
+    context,
+    confidence,
+    source,
+    reason,
+  });
+}
+
+function buildChannelIntentRouting({
+  channel,
+  selected,
+  config,
+  availableTools,
+  context,
+  confidence,
+  source,
+  reason = "",
+}) {
   const availableNames = new Set(
     availableTools.map((tool) =>
       typeof tool === "string" ? tool : tool?.name,
@@ -1366,7 +1509,9 @@ export function classifyChannelIntent({
     channel,
     intent: selected.code,
     label: selected.label,
-    confidence: 0.95,
+    confidence,
+    source,
+    ...(reason ? { reason } : {}),
     requiredContext: [...requiredContext],
     missingContext,
     allowedTools,

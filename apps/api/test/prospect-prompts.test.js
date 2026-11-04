@@ -14,6 +14,13 @@ describe("hechos de la sesión que enmarcan la respuesta", () => {
     ]);
   });
 
+  it("marca una sesión sin hallazgos, contactos ni hipótesis para que la respuesta lo diga primero", () => {
+    expect(buildSessionCoverage({}).isEmpty).toBe(true);
+    expect(buildSessionCoverage({ findings: [], contacts: [], hypotheses: [] }).isEmpty).toBe(true);
+    expect(buildSessionCoverage({ hypotheses: [{ title: "H" }] }).isEmpty).toBe(false);
+    expect(buildSessionCoverage({ findings: rich.findings, contacts: rich.contacts, hypotheses: rich.hypotheses }).isEmpty).toBe(false);
+  });
+
   it("distingue contactos con y sin correo y una sesión sin investigación", () => {
     const partial = buildSessionCoverage({ contacts: [{ email: "a@b.test" }, { email: "" }, {}], findings: [], hypotheses: [], externalResearch: null });
     expect(partial.contactsWithEmail).toBe(1);

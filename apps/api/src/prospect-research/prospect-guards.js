@@ -13,7 +13,7 @@ const normalize = (value) => String(value ?? "")
 
 const CONVERSION_VERB = /\b(convierte|convertir|convierta|convertirlo|convertirla|crea|crear|creame|creale|pasa|pasalo|pasala|registra|registrar|registralo|da de alta|dalo de alta|dala de alta|dar de alta|alta)\b/;
 const CONVERSION_TARGET = /\b(cuenta|contacto|oportunidad|lead|prospecto)\b/;
-const CREATIVE_OBJECT = /\b(correo|email|mail|mensaje|borrador|resumen|lista|tabla|plan|guion|texto|pregunta|preguntas|agenda|briefing)\b/;
+const CREATIVE_OBJECT = /\b(correo|email|mail|mensaje|borrador|resumen|lista|tabla|plan|guion|texto|pregunta|preguntas|agenda|briefing|acercamiento|llamada|objeciones|apertura|estrategia)\b/;
 const CRM_MENTION = /\b(?:en|del|de mi|de) (?:el |mi )?crm\b/;
 const CRM_CONSULT_OBJECT = /\b(oportunidades?|cotizaciones?|actividades|interacciones|pipeline|leads?|cuenta|cuentas)\b/;
 const EXISTENCE_CHECK = /\b(ya existe|existe ya|esta registrad[oa]|ya esta registrad[oa]|duplicad[oa]s?|ya es cliente|ya tenemos)\b/;

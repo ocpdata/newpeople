@@ -760,7 +760,7 @@ async function mockMiCoachApi(
       const result = {
         source: "prospect_research",
         answer:
-          "La hipótesis principal requiere validar continuidad operativa.",
+          "**Validar primero:** La hipótesis principal requiere validar continuidad operativa.",
         evidence: ["Hallazgo de la sesión de prospección."],
         inferences: ["Podría existir una iniciativa de modernización."],
         confidence: "medium",
@@ -3640,6 +3640,10 @@ test.describe("Mi Coach governance and workspaces", () => {
         "La hipótesis principal requiere validar continuidad operativa.",
       ),
     ).toBeVisible();
+    await expect(
+      page.locator(".customer-chat-answer strong", { hasText: "Validar primero:" }),
+    ).toBeVisible();
+    await expect(page.getByText("**Validar primero:**")).toHaveCount(0);
     const prospectFeedback = page.waitForRequest(
       (request) =>
         request.method() === "POST" &&

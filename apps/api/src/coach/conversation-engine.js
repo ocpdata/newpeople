@@ -972,17 +972,33 @@ export async function runConversationEngine({
       };
     }
   }
+  // Cuenta nueva may supply an AI classifier; the patterns decide whenever it is absent, fails or is unsure.
+  const classifyProspectRouting = async () => {
+    const input = {
+      channel,
+      question,
+      availableTools: resolvedTools,
+      context,
+      configuration: channelIntentCatalog,
+    };
+    if (typeof dependencies.classifyChannelIntent === "function") {
+      try {
+        const routed = await dependencies.classifyChannelIntent({
+          ...input,
+          history: channelHistory,
+        });
+        if (routed) return routed;
+      } catch (error) {
+        console.error("[coach] Channel intent classifier failed", { channel, jobId, code: error?.code || error?.name });
+      }
+    }
+    return classifyChannelIntent(input);
+  };
   const channelIntentRouting =
     channel === "customer_account"
       ? structuredChannelIntentRouting
       : channel === "prospect"
-        ? classifyChannelIntent({
-            channel,
-            question,
-            availableTools: resolvedTools,
-            context,
-            configuration: channelIntentCatalog,
-          })
+        ? await classifyProspectRouting()
         : null;
   let documentKnowledge = { status: "not_requested", snippets: [] };
   if (
@@ -1760,6 +1776,7 @@ export async function runConversationEngine({
             intent: channelIntentRouting.intent,
             mode: channelIntentRouting.mode,
             confidence: channelIntentRouting.confidence,
+            source: channelIntentRouting.source || null,
             allowedTools: channelIntentRouting.allowedTools,
             requiredContext: channelIntentRouting.requiredContext,
             missingContext: channelIntentRouting.missingContext,
@@ -1774,6 +1791,9 @@ export async function runConversationEngine({
       evidence: adapterDiagnostics.evidence || null,
       documentKnowledge: adapterDiagnostics.documentKnowledge || null,
       answerAudit: adapterDiagnostics.answerAudit || null,
+      ...(adapterDiagnostics.prospectChat
+        ? { prospectChat: adapterDiagnostics.prospectChat }
+        : {}),
       agentMetrics: adapterDiagnostics.agentMetrics || [],
       failureStage: null,
     },

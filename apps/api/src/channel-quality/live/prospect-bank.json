@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "description": "Banco de evaluación de Cuenta nueva (datos sintéticos; las fuentes son ficticias).",
+  "version": 2,
+  "description": "Banco de evaluación de Cuenta nueva (datos sintéticos; las fuentes son ficticias). El área F mide la utilidad de la ayuda al vendedor.",
   "sessions": {
     "rica": {
       "id": 9001,
@@ -1617,6 +1617,555 @@
             }
           ],
           "mustNotClaim": [],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S25",
+      "area": "F",
+      "title": "Plan de acercamiento priorizado",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Por dónde empiezo con este prospecto? Dame un plan corto.",
+          "mustInclude": [
+            {
+              "id": "persona",
+              "statement": "Recomienda a una persona concreta de la sesión como primer contacto y justifica la elección con su rol, su área o la evidencia.",
+              "critical": true
+            },
+            {
+              "id": "angulo",
+              "statement": "Propone un ángulo de apertura ligado a un hallazgo o hipótesis concreta de la sesión (la nueva planta, la nube híbrida o la seguridad).",
+              "critical": true
+            },
+            {
+              "id": "fuente",
+              "statement": "Respalda el ángulo con la fuente o la fecha del hallazgo.",
+              "critical": false
+            },
+            {
+              "id": "faltante",
+              "statement": "Indica qué dato falta para contactar, como el correo o el teléfono de la persona.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventado",
+              "statement": "Recomienda a una persona, hallazgo o evento que no está en la sesión."
+            },
+            {
+              "id": "datos",
+              "statement": "Incluye un correo, teléfono o cifra que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true,
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S26",
+      "area": "F",
+      "title": "Correo de primer contacto listo para enviar",
+      "session": "rica",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Redáctame un correo de primer contacto para el contacto más indicado.",
+          "mustInclude": [
+            {
+              "id": "formato",
+              "statement": "Incluye un asunto y un cuerpo de correo listos para usarse.",
+              "critical": true
+            },
+            {
+              "id": "destinatario",
+              "statement": "Está dirigido a una persona de la sesión, con su nombre o su rol.",
+              "critical": true
+            },
+            {
+              "id": "personalizacion",
+              "statement": "Se apoya de forma fiel en un hallazgo concreto de la sesión (la nueva planta, la nube híbrida o los nombramientos).",
+              "critical": true
+            },
+            {
+              "id": "paso",
+              "statement": "Cierra con una invitación pequeña y concreta, como una llamada breve o una pregunta.",
+              "critical": false
+            },
+            {
+              "id": "breve",
+              "statement": "Es breve: el cuerpo no pasa de unas 150 palabras.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "persona_falsa",
+              "statement": "Dirige el correo a, o menciona, una persona que no está en la sesión."
+            },
+            {
+              "id": "promesas",
+              "statement": "Promete resultados, descuentos, ahorros o casos de éxito, o afirma una relación previa con la empresa."
+            },
+            {
+              "id": "datos",
+              "statement": "Incluye un correo, teléfono o cifra que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true,
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S27",
+      "area": "F",
+      "title": "Guion de la llamada de descubrimiento",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Prepárame la llamada de descubrimiento con Carlos Treviño.",
+          "mustInclude": [
+            {
+              "id": "apertura",
+              "statement": "Propone una apertura breve para la llamada, ligada a un hallazgo o a la hipótesis de conectividad o de nube.",
+              "critical": true
+            },
+            {
+              "id": "preguntas",
+              "statement": "Entrega al menos tres preguntas de descubrimiento dirigidas a un Gerente de TI (conectividad, nube híbrida o seguridad).",
+              "critical": true
+            },
+            {
+              "id": "validar",
+              "statement": "Indica qué hipótesis hay que validar en la llamada y las presenta como por validar.",
+              "critical": false
+            },
+            {
+              "id": "cierre",
+              "statement": "Termina con un cierre o siguiente paso concreto.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "hechos",
+              "statement": "Presenta como hechos conocidos el proveedor actual, el presupuesto, el tamaño o las decisiones de la empresa."
+            },
+            {
+              "id": "relacion",
+              "statement": "Afirma una relación o conversación previa con Aceros del Norte o con Carlos Treviño."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S28",
+      "area": "F",
+      "title": "Objeciones probables",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué objeciones me pueden poner y cómo las respondo?",
+          "mustInclude": [
+            {
+              "id": "objeciones",
+              "statement": "Anticipa al menos tres objeciones plausibles (por ejemplo, prioridad, presupuesto, proveedor actual o momento) y propone cómo responder a cada una.",
+              "critical": true
+            },
+            {
+              "id": "basado",
+              "statement": "Las respuestas se apoyan en los hallazgos o hipótesis de la sesión y no en afirmaciones sobre la empresa que no están en ella.",
+              "critical": true
+            },
+            {
+              "id": "marco",
+              "statement": "Presenta las objeciones como supuestos probables, no como algo que la empresa ya dijo.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "casos",
+              "statement": "Cita casos de éxito, clientes, referencias, ahorros o cifras que no están en la sesión."
+            },
+            {
+              "id": "dicho",
+              "statement": "Afirma que la empresa ya expresó esas objeciones."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S29",
+      "area": "F",
+      "title": "Qué falta antes de proponer una reunión",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué me falta saber antes de proponer una reunión?",
+          "mustInclude": [
+            {
+              "id": "huecos",
+              "statement": "Señala lo que la sesión no tiene registrado, como el correo o teléfono de las personas, el presupuesto, los proveedores actuales o el tamaño de la empresa.",
+              "critical": true
+            },
+            {
+              "id": "accion",
+              "statement": "Propone cómo conseguir esos datos o qué validar primero (por ejemplo, preguntarlo en la primera llamada o investigar fuentes públicas).",
+              "critical": true
+            },
+            {
+              "id": "prioridad",
+              "statement": "Indica cuál es lo más importante por conseguir primero.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "relleno",
+              "statement": "Da como conocidos el presupuesto, el proveedor actual o el tamaño de la empresa."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S30",
+      "area": "F",
+      "title": "Siguiente paso concreto para hoy",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué hago hoy con este prospecto?",
+          "mustInclude": [
+            {
+              "id": "accion",
+              "statement": "Recomienda una acción concreta y accionable para hoy, no una lista genérica.",
+              "critical": true
+            },
+            {
+              "id": "razon",
+              "statement": "Explica por qué esa acción con un dato de la sesión.",
+              "critical": true
+            },
+            {
+              "id": "despues",
+              "statement": "Menciona un paso posterior breve.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "hecho",
+              "statement": "Afirma que ya creó, agendó o envió algo."
+            },
+            {
+              "id": "datos",
+              "statement": "Incluye un correo, teléfono o cifra que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true,
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S31",
+      "area": "F",
+      "title": "Preguntas para un rol",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Qué le pregunto a Laura Medina?",
+          "mustInclude": [
+            {
+              "id": "rol",
+              "statement": "Las preguntas están dirigidas a una Directora de Operaciones (operación de la planta, continuidad o seguridad industrial) y no son genéricas.",
+              "critical": true
+            },
+            {
+              "id": "ligadas",
+              "statement": "Se ligan a la nueva planta o a la hipótesis de ciberseguridad OT/IT.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "hechos",
+              "statement": "Presenta las preguntas como respuestas ya conocidas o afirma que Laura Medina ya dijo algo."
+            },
+            {
+              "id": "datos",
+              "statement": "Incluye un correo, teléfono o cifra que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true,
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S32",
+      "area": "F",
+      "title": "Acercamiento con una sesión casi vacía",
+      "session": "escasa",
+      "critical": true,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Prepárame el acercamiento a esta empresa: a quién contacto y qué les digo.",
+          "mustInclude": [
+            {
+              "id": "limite",
+              "statement": "Dice que la sesión casi no tiene datos (sin hallazgos, contactos ni hipótesis registrados).",
+              "critical": true
+            },
+            {
+              "id": "util",
+              "statement": "Aun así ayuda: propone un primer paso útil, como ejecutar la investigación de fuentes públicas o confirmar quién decide, o un borrador genérico marcado como tal.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "inventado",
+              "statement": "Menciona personas, hallazgos, noticias, cifras o proyectos de Textiles Andinos que no están en la sesión."
+            },
+            {
+              "id": "datos",
+              "statement": "Incluye un correo o teléfono."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true,
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S33",
+      "area": "F",
+      "title": "Correo en inglés",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Write the first-contact email for Laura Medina in English.",
+          "mustInclude": [
+            {
+              "id": "ingles",
+              "statement": "El correo está escrito en inglés.",
+              "critical": true
+            },
+            {
+              "id": "destinatario",
+              "statement": "Está dirigido a Laura Medina.",
+              "critical": true
+            },
+            {
+              "id": "fiel",
+              "statement": "Se apoya de forma fiel en un hallazgo de la sesión.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "datos",
+              "statement": "Incluye un correo, teléfono o cifra que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true,
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S34",
+      "area": "F",
+      "title": "Elegir a quién contactar y redactarle",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿A quién contacto primero?",
+          "mustInclude": [
+            {
+              "id": "eleccion",
+              "statement": "Elige a una persona concreta de la sesión y justifica la elección.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [],
+          "operations": "none",
+          "checks": {},
+          "allowClarification": false
+        },
+        {
+          "id": "t2",
+          "question": "Redáctale un correo a esa persona.",
+          "mustInclude": [
+            {
+              "id": "destinatario",
+              "statement": "Está dirigido a la misma persona que recomendó en la respuesta anterior.",
+              "critical": true
+            },
+            {
+              "id": "fiel",
+              "statement": "Se apoya de forma fiel en un hallazgo de la sesión.",
+              "critical": true
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "datos",
+              "statement": "Incluye un correo, teléfono o cifra que no está en la sesión."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true,
+            "noEmail": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S35",
+      "area": "F",
+      "title": "Resumen en tres puntos para el gerente",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "Resúmelo en tres puntos para mi gerente: por qué vale la pena este prospecto.",
+          "mustInclude": [
+            {
+              "id": "tres",
+              "statement": "Entrega un resumen en tres puntos.",
+              "critical": true
+            },
+            {
+              "id": "valor",
+              "statement": "Explica por qué vale la pena el prospecto con hallazgos concretos de la sesión (la inversión en la nueva planta, la nube híbrida o la seguridad).",
+              "critical": true
+            },
+            {
+              "id": "marco",
+              "statement": "Aclara que son datos de prospección y que las hipótesis están por validar.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "tamano",
+              "statement": "Da cifras de ingresos, empleados o tamaño, o presenta la empresa como cliente del CRM."
+            }
+          ],
+          "operations": "none",
+          "checks": {
+            "noUnsupportedNumbers": true
+          },
+          "allowClarification": false
+        }
+      ]
+    },
+    {
+      "id": "S36",
+      "area": "F",
+      "title": "Hipótesis a validar primero",
+      "session": "rica",
+      "critical": false,
+      "turns": [
+        {
+          "id": "t1",
+          "question": "¿Cuál hipótesis debo validar primero y con quién?",
+          "mustInclude": [
+            {
+              "id": "hipotesis",
+              "statement": "Elige una hipótesis concreta de la sesión y justifica por qué va primero.",
+              "critical": true
+            },
+            {
+              "id": "persona",
+              "statement": "Indica con qué persona o rol de la sesión validarla, de forma coherente con la hipótesis (Gerente de TI para conectividad o nube; Directora de Operaciones para ciberseguridad).",
+              "critical": true
+            },
+            {
+              "id": "pregunta",
+              "statement": "Sugiere la pregunta de validación.",
+              "critical": false
+            }
+          ],
+          "mustNotClaim": [
+            {
+              "id": "fuera",
+              "statement": "Propone una hipótesis o una persona que no está en la sesión."
+            }
+          ],
           "operations": "none",
           "checks": {},
           "allowClarification": false

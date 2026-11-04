@@ -7,7 +7,7 @@ Medición propia de Coach y Cuenta nueva. Es independiente de la de Cliente exis
 | Fuente | Qué es | Cómo se registra | Umbral inicial |
 | --- | --- | --- | --- |
 | Laboratorio (`lab`) | Casos deterministas, sin IA ni costo, sobre entidades, búsqueda, respuestas de la sesión y reglas de operaciones | `npm run quality:lab --workspace=apps/api -- --channel=coach\|prospect` | 90% de los casos |
-| IA real (`live`) | Bancos con IA real y juez, con costo: Cuenta nueva (24 escenarios, datos sintéticos) y Coach (20 escenarios, datos de la base de desarrollo) | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` y `npm run test:coach-chat:live --workspace=apps/api -- --user <id> [--only K01,K08] [--repeat 3]` | 85% de los casos y 100% de los escenarios críticos |
+| IA real (`live`) | Bancos con IA real y juez, con costo: Cuenta nueva (36 escenarios, datos sintéticos) y Coach (20 escenarios, datos de la base de desarrollo) | `npm run test:prospect-chat:live --workspace=apps/api -- --user <id> [--judge-model <modelo>] [--only S01,S12]` y `npm run test:coach-chat:live --workspace=apps/api -- --user <id> [--only K01,K08] [--repeat 3]` | 85% de los casos y 100% de los escenarios críticos |
 | Producción (`production_monitor`) | Turnos y valoraciones reales de los últimos 7 días | Automático una vez al día o con **Actualizar monitoreo de producción** | 95% de turnos sin fallo, 90% de turnos resueltos (Coach), 75% de valoraciones positivas (con al menos 5), p95 ≤ 30 s |
 
 Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea base medida con uso real. Cada ejecución queda como **Dentro del umbral**, **Bajo el umbral** o **Bajó frente a la anterior** (cae 5 puntos o más frente a la ejecución anterior del mismo canal y fuente).
@@ -33,10 +33,10 @@ Los umbrales son iniciales y deben ajustarse cuando cada canal tenga una línea 
 
 ## Banco de Cuenta nueva con IA real
 
-- **Escenarios:** 24, en cinco áreas (A consultar la sesión, B preparar el acercamiento, C honestidad y límites, D conversión segura, E conversación). Los escenarios 12 a 21 son críticos. Definición: `apps/api/src/channel-quality/live/prospect-bank.json` (sesiones sintéticas con fuentes ficticias).
+- **Escenarios:** 36, en seis áreas (A consultar la sesión, B preparar el acercamiento, C honestidad y límites, D conversión segura, E conversación, F ayuda al vendedor). Son críticos los escenarios 12 a 21, el 26 (correo de primer contacto sin inventar) y el 32 (acercamiento con una sesión casi vacía). Definición: `apps/api/src/channel-quality/live/prospect-bank.json` (sesiones sintéticas con fuentes ficticias).
 - **Cómo se califica un turno:** un juez de IA da un veredicto por afirmación esperada o prohibida y debe citar fragmentos literales de la respuesta (si la cita no aparece, no cuenta). Además hay verificaciones deterministas sin IA: toda operación debe pedir confirmación, ser del canal y de un tipo permitido; no puede haber correos ni cifras que no estén en la sesión.
 - **Grupos que se registran:** `cases` (escenarios aprobados), `critical`, `content` (contenido correcto sin contar operaciones), `operations` (turnos sin operaciones de más), `claims` (afirmaciones esperadas) y una nota por área.
-- **Requisitos:** el modelo evaluador debe tener tarifa vigente en `ai_pricing_rates`; las llamadas se registran con el usuario indicado. Cada corrida completa cuesta unos USD 0,14 (58 llamadas). Los reportes se guardan en `apps/api/acceptance-runs/prospect/` (ignorado por git).
+- **Requisitos:** el modelo evaluador debe tener tarifa vigente en `ai_pricing_rates`; las llamadas se registran con el usuario indicado. Cada corrida completa de los 24 escenarios originales costaba unos USD 0,14 (58 llamadas); con el clasificador, la verificación y los 12 escenarios de ayuda, una corrida de 36 cuesta unos USD 0,24 (unas 110 llamadas). Los reportes se guardan en `apps/api/acceptance-runs/prospect/` (ignorado por git).
 - **Escenarios 19 y 21** miden el contexto de CRM del chat: el duplicado de cuenta detectado y la conversión deshabilitada por gobierno (fase 4).
 
 ### Línea base (2026-11-01, motor actual, chat `gpt-4.1-mini`, evaluador `gpt-6.1-sol`)
@@ -112,6 +112,39 @@ Los escenarios 19 y 21 ya no son `futureCapability`. La corrida de 22/24 falló 
 ### Cierre del criterio de liberación de Cuenta nueva (2026-11-01)
 
 Una respuesta del modelo que no listaba evidencia era descartada por el motor con el mensaje genérico («No puedo confirmar una respuesta de negocio…»; el escenario 3 fallaba así una de cada ocho veces). Ahora, si la respuesta se apoya en la sesión, el adaptador la respalda con una línea de evidencia calculada por el servidor (cuántos hallazgos, contactos e hipótesis tiene la sesión). Resultado: **24/24 y 24/24 en dos corridas completas consecutivas, críticos 10/10**.
+
+### Ayuda al vendedor: interpretar con IA, verificar y preparar el contacto (2026-11-04)
+
+El área F del banco (escenarios 25 a 36) mide si la ayuda es **utilizable**, no solo honesta: priorizar a quién contactar, correo listo para enviar, guion de llamada con apertura y cierre, objeciones, siguiente paso, qué falta saber y una sesión casi vacía. Sus afirmaciones exigen una persona concreta, un hallazgo con su fuente, un cierre accionable o la causa de lo que falta.
+
+**Línea base del motor anterior (modelo `gpt-4.1-mini`):** área F **8/12**, críticos de F 1/2. El chat resumía en vez de actuar: el guion de llamada no traía apertura ni cierre, no elegía una hipótesis para validar primero y, con la sesión vacía, respondía sobre contactos aunque se pedía un acercamiento.
+
+**Qué cambió**
+
+| Pieza | Qué hace | Interruptor |
+| --- | --- | --- |
+| Clasificador semántico (`prospect-intent-classifier.js`) | Un modelo elige la intención entre las habilitadas; si duda, falla o responde fuera del catálogo, deciden los patrones. Lee la instrucción de **Clasificador semántico · B3** de Cuenta nueva, que ahora está conectada | `PROSPECT_SEMANTIC_CLASSIFIER=false` |
+| Intenciones de ayuda | `call_preparation`, `contact_prioritization`, `objection_handling` y `next_step_recommendation`, además de `outreach_draft`; editables desde la administración como las demás | Se pueden deshabilitar desde el catálogo |
+| Instrucciones de ayuda (`prospect-prompts.js`) | Entregar el resultado (no un resumen), decidir cuando piden elegir, marcar supuestos, no inventar y, si `sessionCoverage.isEmpty`, abrir con «La sesión no tiene hallazgos, contactos ni hipótesis registrados.» | — |
+| Verificación en ejecución (`prospect-verifier.js`) | Comprueba contra la sesión los correos, enlaces, cifras, fechas y nombres de personas o empresas. Si hay datos sin respaldo pide una corrección; si persisten, retira solo las oraciones afectadas y lo avisa. Los nombres no se revisan si la respuesta no está en español | `PROSPECT_ANSWER_VERIFICATION=false` |
+| Modelo de las respuestas de ayuda | Por defecto el nivel Rápido del módulo; con `PROSPECT_CHAT_HELP_MODEL_ROLE=advanced` las intenciones de ayuda usan el nivel Avanzado del módulo Cuenta nueva | `PROSPECT_CHAT_HELP_MODEL_ROLE` |
+
+La traza de calidad guarda, sin texto de la pregunta ni de la respuesta, el origen de la clasificación (`semantic` o `patterns`), el nivel de modelo y el resultado de la verificación (`clean`, `repaired` o `degraded`, con los tipos de dato).
+
+**Resultados con el motor nuevo (modelo rápido)**
+
+| Medida | Línea base | Después |
+| --- | --- | --- |
+| Área F | 8/12 | 11/12, 11/12, 12/12 y 12/12 (corrida final) en cuatro corridas completas; también 12/12 en una corrida solo de F |
+| Escenarios aprobados (36) | — | 33/36, 34/36, 36/36 y **36/36** en la corrida final, registrada en «Calidad Coach y Cuenta nueva» como dentro del umbral |
+| Críticos (12) | — | 11/12, 12/12, 12/12 y 12/12 |
+| Operaciones válidas | 29/29 | 42/42 |
+
+La corrida de 33/36 se hizo antes de la regla de la sesión vacía, que corrigió el único crítico que fallaba (S32). Los fallos que quedan alternan entre corridas y son de redacción del modelo: el escenario 2 (el modelo atribuía a los directivos una responsabilidad de validación o presentaba como iniciado lo que la fuente dice que se iniciará; falló 1 de 5 corridas con el clasificador y la verificación apagados y 2 de 5 con ellos encendidos, y 1 de 6 tras agregar la regla de fidelidad temporal), el 5 y el 28.
+
+**Decisión sobre el modelo.** Con el nivel Avanzado (`gpt-6.1-sol`) el área F dio 12/12 en dos corridas y 38/38 afirmaciones, contra 12/12 y 37/38 con el rápido. El banco **no justifica** el cambio: ambos aprueban. En la lectura de las respuestas el avanzado distingue mejor lo que es supuesto, agrega la base de la elección y lo pendiente, y el rápido llega a presentar un presupuesto como si existiera. Cuesta unos USD 0,008 más por respuesta de ayuda (el área F pasó de USD 0,10 a unos 0,20 por corrida). Se dejó apagado; para activarlo basta `PROSPECT_CHAT_HELP_MODEL_ROLE=advanced`. El juez es el mismo modelo, así que conviene un banco con más escenarios de redacción antes de decidirlo.
+
+**Falsos positivos corregidos en la verificación.** Con las respuestas reales aparecieron nombres falsos por unir encabezados en negritas, listas y paréntesis; hoy se revisa por oraciones sin marcas de Markdown.
 
 ## Banco de Coach con IA real
 

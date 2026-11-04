@@ -537,7 +537,7 @@ final del job.
 
   **Instrucciones administrables de B3:** la sección **Clasificador semántico · B3** utiliza `semantic-classifier-prompts.js`, separada de los prompts del planificador B6. Permite editar instrucciones de Coach, Cliente existente y Cuenta nueva con permiso `mi_coach.admin`, control de concurrencia por `expectedVersion`, auditoría e historial. Restaurar una revisión crea una nueva versión; cargar las instrucciones predeterminadas solo cambia el editor hasta guardar.
 
-  Solo **Cliente existente** consume esta configuración en los turnos nuevos. Coach continúa usando su clasificador actual; su texto inicial se ofrece como referencia. Cuenta nueva dispone de una propuesta para uso futuro, sin clasificador conectado a esta configuración. Guardar instrucciones no conecta ninguno de estos dos canales.
+  Consumen esta configuración **Cliente existente** y **Cuenta nueva** (clasificador de `prospect-intent-classifier.js`, que decide entre las intenciones habilitadas del catálogo y deja a los patrones como respaldo). Coach continúa usando su clasificador actual; su texto inicial se ofrece como referencia. Guardar instrucciones de Coach no lo conecta.
 
   B3 carga las instrucciones efectivas antes de clasificar. Sin personalización utiliza el texto predeterminado; un fallo de almacenamiento se reporta como fallo de preparación, no como una personalización ignorada. La traza de clasificación registra canal, versión y origen (`default`/`custom`). El catálogo habilitado, esquema de respuesta, umbrales, permisos y confirmaciones permanecen bajo control del servidor.
 

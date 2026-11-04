@@ -58,6 +58,38 @@ describe("Coach observability", () => {
     expect(query.mock.calls[0][0]).not.toContain("question_text");
   });
 
+  it("persists the Cuenta nueva classifier, model and verification facts without any text", async () => {
+    query.mockResolvedValueOnce({ insertId: 45 });
+    await recordCoachTurnQualityTrace({
+      channel: "prospect",
+      process: "contact_prioritization",
+      userId: 17,
+      trace: {
+        validationStatus: "valid",
+        diagnostics: {
+          channelIntentRouting: { intent: "contact_prioritization", mode: "query", confidence: 0.95, source: "semantic" },
+          prospectChat: {
+            classifier: { source: "semantic", intent: "contact_prioritization", question: "must not persist" },
+            generation: { intent: "contact_prioritization", modelRole: "advanced", model: "must not persist" },
+            verification: {
+              status: "repaired", checked: 2, issueCount: 1, issueKinds: ["email"],
+              issues: [{ kind: "email", text: "robert@invento.example" }],
+            },
+          },
+        },
+      },
+    });
+    const stored = JSON.parse(query.mock.calls[0][1][18]);
+    expect(stored.channelIntentRouting).toMatchObject({ intent: "contact_prioritization", source: "semantic" });
+    expect(stored.prospectChat).toEqual({
+      classifier: { source: "semantic", intent: "contact_prioritization" },
+      generation: { intent: "contact_prioritization", modelRole: "advanced" },
+      verification: { status: "repaired", checked: 2, issueCount: 1, issueKinds: ["email"] },
+    });
+    expect(JSON.stringify(query.mock.calls[0][1])).not.toContain("must not persist");
+    expect(JSON.stringify(query.mock.calls[0][1])).not.toContain("invento.example");
+  });
+
   it("maps historical b6Intent diagnostics to semanticIntent", async () => {
     query.mockResolvedValueOnce([
       {

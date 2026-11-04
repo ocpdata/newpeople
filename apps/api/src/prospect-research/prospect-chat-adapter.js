@@ -1,13 +1,30 @@
 import { runStructuredTextResearch } from "../structuredWebResearch.js";
+import { aiModelFor } from "../ai-services/state.js";
 import { runConversationEngine } from "../coach/conversation-engine.js";
 import { loadCoachBusinessRules } from "../coach/business-rules.js";
 import { listCoachAdminRules } from "../coach/admin-rules.js";
 import { loadChannelIntentConfigurations } from "../coach/channel-intent-governance.js";
 import { buildProspectOperations, buildProspectRecommendedActions, normalizeProspectRecommendedActions } from "./prospect-operations.js";
 import { buildGuardedProspectTurn } from "./prospect-guards.js";
-import { PROSPECT_CHAT_INSTRUCTION, PROSPECT_SYSTEM_PROMPT, buildSessionCoverage, languageInstruction, requestedLanguage } from "./prospect-prompts.js";
+import { classifyProspectIntent } from "./prospect-intent-classifier.js";
+import { prospectVerificationEnabled, verifyAndRepairAnswer } from "./prospect-verifier.js";
+import { PROSPECT_CHAT_INSTRUCTION, PROSPECT_HELP_INTENTS, PROSPECT_SYSTEM_PROMPT, buildSessionCoverage, languageInstruction, prospectIntentGuidance, requestedLanguage } from "./prospect-prompts.js";
 
 export { normalizeProspectRecommendedActions };
+
+const CHAT_FEATURE_CODE = "prospect_research.chat";
+
+// Drafting and prioritizing may run on the module's advanced model; it stays off until the bank shows it is worth the cost.
+function helpModelFor(intent, env = process.env) {
+  if (!PROSPECT_HELP_INTENTS.has(intent)) return null;
+  if (String(env.PROSPECT_CHAT_HELP_MODEL_ROLE || "fast").toLowerCase() !== "advanced") return null;
+  return aiModelFor(CHAT_FEATURE_CODE, "advanced") || null;
+}
+
+function correctionInstruction(issues) {
+  const listed = issues.map((issue) => `«${issue.text}»`).join(", ");
+  return `\n\nCorrección obligatoria: tu respuesta anterior incluyó datos que no están en la sesión de prospección: ${listed}. Reescribe la respuesta completa sin esos datos y sin sustituirlos por otros inventados; si un dato hace falta y no está, dilo.`;
+}
 
 function normalize(value) {
   return String(value || "")
@@ -211,6 +228,8 @@ export function createProspectChatAdapter({ user, session, jobId }) {
     crm: session.crm || null,
   };
   const permissions = user?.permissionSet || new Set();
+  // Per-turn facts for the quality trace; runTurn resets them.
+  let turnState = {};
   const availableTools = [
     { name: "getProspectProfile", requiredPermission: "prospeccion.read" },
     { name: "searchProspectFindings", requiredPermission: "prospeccion.read" },
@@ -223,6 +242,21 @@ export function createProspectChatAdapter({ user, session, jobId }) {
   const dependencies = {
     loadChannelIntentConfigurations: ({ channel }) =>
       loadChannelIntentConfigurations({ channel }),
+    classifyChannelIntent: async ({ question, history, availableTools: resolvedTools, context, configuration }) => {
+      const routing = await classifyProspectIntent({
+        question,
+        history,
+        catalog: configuration,
+        availableTools: resolvedTools,
+        context,
+        coverage: buildSessionCoverage(snapshot),
+        userId: user?.id,
+        jobId,
+      });
+      turnState.classifier = { source: routing ? "semantic" : "patterns", intent: routing?.intent || null };
+      return routing;
+    },
+    getTurnDiagnostics: () => ({ prospectChat: turnState }),
     loadAdministrativeRules: listCoachAdminRules,
     prepareReadModel: async ({
       availableTools: resolvedTools,
@@ -291,6 +325,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
         conversationHistory,
         instruction:
           PROSPECT_CHAT_INSTRUCTION +
+          prospectIntentGuidance(model?.channelIntentRouting?.intent) +
           languageInstruction(requestedLanguage({ question, history: conversationHistory })) +
           (model?.channelIntentRouting
             ? `\n\nEnrutamiento del servidor: ${JSON.stringify(model.channelIntentRouting)}. Indica qué datos de la sesión se cargaron y qué herramientas están permitidas, pero no define lo que pide el vendedor: responde a su pregunta usando únicamente esos datos. La intención prospect_profile es solo la de respaldo y no significa que pidan un resumen del perfil.`
@@ -301,20 +336,25 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       };
     },
     requestResponse: async ({ payload }) => {
+      const routing = payload.context?.channelIntentRouting;
       const fallback = buildProspectFallback(
         snapshot,
         payload.question,
-        payload.context?.channelIntentRouting,
+        routing,
       );
-      const askModel = () => runStructuredTextResearch({
+      const model = helpModelFor(routing?.intent);
+      turnState.generation = { intent: routing?.intent || null, modelRole: model ? "advanced" : "fast" };
+      const askModel = (correction = null) => runStructuredTextResearch({
         schemaName: "prospect_contextual_chat",
         systemPrompt:
           PROSPECT_SYSTEM_PROMPT,
         subject: snapshot.profile?.companyName || "prospecto",
-        context: payload,
+        context: correction
+          ? { ...payload, previousAnswer: correction.previousAnswer, instruction: `${payload.instruction}${correctionInstruction(correction.issues)}` }
+          : payload,
         currentValues: {},
         fields: [
-          { key: "answer", type: "string", example: fallback.answer },
+          { key: "answer", type: "string", example: "Respuesta completa para el vendedor." },
           {
             key: "evidence",
             type: "array",
@@ -335,16 +375,28 @@ export function createProspectChatAdapter({ user, session, jobId }) {
           },
           { key: "source", type: "string", example: "prospect_research" },
         ],
+        ...(model ? { model } : {}),
         aiUsageContext: {
           userId: Number(user.id),
-          featureCode: "prospect_research.chat",
+          featureCode: CHAT_FEATURE_CODE,
           jobType: "prospect_chat",
           jobId,
         },
       });
       // The provider sometimes returns an unparsable answer; one more attempt is cheaper than the generic fallback.
       const result = (await askModel()) || (await askModel());
-      return result || fallback;
+      if (!result) return fallback;
+      if (!prospectVerificationEnabled()) return result;
+      const checked = await verifyAndRepairAnswer({
+        result,
+        snapshot,
+        question: payload.question,
+        history: payload.conversationHistory,
+        repair: askModel,
+        fallbackAnswer: fallback.answer,
+      });
+      turnState.verification = checked.verification;
+      return checked.result;
     },
     resolveResponseContext: (_snapshot, context) => ({
       context,
@@ -365,6 +417,7 @@ export function createProspectChatAdapter({ user, session, jobId }) {
       sourceChannel: "prospect",
     },
     async runTurn({ question, history = [] }) {
+      turnState = {};
       const guarded = buildGuardedProspectTurn({
         question,
         snapshot,

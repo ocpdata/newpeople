@@ -20,6 +20,7 @@ const GROUPS = {
   area_c: "Honestidad y límites",
   area_d: "Conversión segura",
   area_e: "Conversación",
+  area_f: "Ayuda al vendedor",
   known_gaps_fixed: "Brechas conocidas corregidas",
   reliability: "Turnos sin fallo",
   resolution: "Turnos resueltos",
