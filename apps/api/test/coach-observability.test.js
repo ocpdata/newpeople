@@ -465,7 +465,7 @@ describe("Coach observability", () => {
       if (sql.includes("SELECT channel, enabled, rollout_percentage")) {
         return [
           {
-            channel: "prospect",
+            channel: "coach",
             enabled: true,
             rollout_percentage: 0,
             allowlist_json: [],
@@ -493,7 +493,7 @@ describe("Coach observability", () => {
         user: { id: 7 },
         rollouts: [
           {
-            channel: "prospect",
+            channel: "coach",
             enabled: true,
             rolloutPercentage: 50,
             allowlist: [],
@@ -503,6 +503,18 @@ describe("Coach observability", () => {
     ).rejects.toMatchObject({
       code: "ROLLOUT_QUALITY_GATE_INSUFFICIENT_SAMPLE",
     });
+  });
+
+  it("does not expose rollout controls for Cuenta nueva", async () => {
+    query.mockResolvedValue([]);
+    await expect(
+      saveCoachChannelRollouts({
+        user: { id: 7 },
+        rollouts: [
+          { channel: "prospect", enabled: false, rolloutPercentage: 0, allowlist: [] },
+        ],
+      }),
+    ).rejects.toThrow("Canal de rollout no soportado");
   });
 
   it("does not expose planner rollout controls for Customer Existing", async () => {

@@ -41,10 +41,11 @@ la sesion. Las politicas del canal antiguas (`PUT`/`DELETE /governance/business-
 con `channel=prospect`) responden `409` y remiten a esta seccion para no sobrescribir
 una version.
 
-El **rollout por canal** (Coach y Cuenta nueva) se configura en la misma
-administracion, pero **no limita el chat de Cuenta nueva**: esta disponible para todos
-los usuarios con `prospeccion.read`, aunque el rollout del canal este apagado o en un
-porcentaje menor. El rollout de Coach todavia solo se configura: no limita su chat.
+El **rollout por canal** se configura en la misma administracion, pero solo existe para
+Coach, y todavia solo se configura: no limita su chat. Cuenta nueva ya no tiene fila de
+rollout (el esquema la elimina al iniciar) y `PUT /api/mi-agent/coach/rollouts` rechaza
+el canal `prospect`: el chat esta disponible para todos los usuarios con
+`prospeccion.read`.
 
 La pantalla organiza el inventario funcional en nueve categorias. Cada regla tiene
 un identificador estable y distingue:

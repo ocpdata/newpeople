@@ -5511,7 +5511,7 @@ router.put(
       !Array.isArray(rollouts) ||
       rollouts.some(
         (rollout) =>
-          !["coach", "prospect"].includes(rollout?.channel) ||
+          rollout?.channel !== "coach" ||
           typeof rollout.enabled !== "boolean" ||
           !Number.isFinite(Number(rollout.rolloutPercentage)) ||
           rollout.plannerMode !== undefined ||

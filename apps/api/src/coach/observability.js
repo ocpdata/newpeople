@@ -4,7 +4,7 @@ import { ensureCoachSchema } from "./schema.js";
 import { summarizeCoachDecisionTrace } from "./decision-trace.js";
 
 export const COACH_CHANNELS = ["coach", "customer_account", "prospect"];
-const COACH_ROLLOUT_CHANNELS = ["coach", "prospect"];
+const COACH_ROLLOUT_CHANNELS = ["coach"];
 export const COACH_FEEDBACK_CATEGORIES = [
   "intent",
   "entity",
@@ -1189,7 +1189,7 @@ export async function listCoachChannelRollouts() {
     `SELECT channel, enabled, rollout_percentage, allowlist_json, updated_at,
             updated_by_user_id
      FROM coach_channel_rollouts
-     WHERE channel IN ('coach', 'prospect') ORDER BY channel`,
+     WHERE channel = 'coach'`,
   );
   return rows.map((row) => ({
     channel: row.channel,

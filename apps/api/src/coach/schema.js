@@ -295,10 +295,11 @@ export async function ensureCoachSchema() {
           `ALTER TABLE coach_channel_rollouts DROP COLUMN planner_mode`,
         );
       }
+      // Cuenta nueva and Cliente existente are not gated by rollout: only Coach keeps a row.
       await query(
-        `DELETE FROM coach_channel_rollouts WHERE channel = 'customer_account'`,
+        `DELETE FROM coach_channel_rollouts WHERE channel IN ('customer_account', 'prospect')`,
       );
-      for (const channel of ["coach", "prospect"]) {
+      for (const channel of ["coach"]) {
         await query(
           `INSERT INTO coach_channel_rollouts
             (channel, enabled, rollout_percentage, allowlist_json, created_at, updated_at)

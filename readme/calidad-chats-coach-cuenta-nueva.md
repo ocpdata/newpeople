@@ -157,7 +157,7 @@ El área G del banco (escenarios 37 a 43) mide el uso de la biblioteca y del con
 | Quién atiende una cuenta parecida | Los responsables de la cuenta que se detectó como posible duplicado; el chat recomienda consultarles antes de escribir y de decidir entre usar la cuenta o crear otra |
 | Qué falta para convertir | `crm.readiness` calcula por cuenta, contacto y oportunidad lo que falta (cuenta del CRM, persona, hipótesis, correo, duplicados, gobierno, reglas) y la respuesta es determinista, sin modelo |
 | Interfaz | Campo multilínea (Ctrl/Cmd+Enter envía), progreso con segundos, cancelar (la pregunta vuelve al cuadro y el servidor descarta la respuesta, sin dejar historial), preguntas sugeridas, copiar respuesta, Markdown y espera sin el tope fijo de 60 s |
-| Rollout | No aplica a Cuenta nueva: el chat está disponible para todos los usuarios con `prospeccion.read` |
+| Rollout | Cuenta nueva no tiene rollout: el chat está disponible para todos los usuarios con `prospeccion.read` |
 | Reglas del servidor de Cuenta nueva | Versionadas y editables desde la administración: biblioteca, clientes parecidos, conversiones permitidas, clasificador, nivel de modelo y memoria. Ver [administracion-mi-coach.md](./administracion-mi-coach.md) |
 
 **Resultados (modelo rápido).** Área G: 6/7, 7/7 y 7/7 en tres corridas. Banco completo de 43 escenarios: 40/43, 42/43 y **43/43** en la corrida final, registrada como dentro del umbral (críticos 14/14 y afirmaciones 102/102). Dos ajustes salieron de las corridas: pedir las fuentes dejaba la lista solo en el campo de evidencia y la respuesta en una frase de introducción (escenario 5, ahora con instrucción propia y 5/5), y el banco leía la biblioteca real para sesiones que no la declaraban (escenario 28).

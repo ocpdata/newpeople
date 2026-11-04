@@ -2067,7 +2067,7 @@ describe("API integration baseline", () => {
     const traceId = Number(traceInsert.insertId);
     const rolloutRows = await query(
       `SELECT enabled, rollout_percentage, allowlist_json
-       FROM coach_channel_rollouts WHERE channel = 'prospect' LIMIT 1`,
+       FROM coach_channel_rollouts WHERE channel = 'coach' LIMIT 1`,
     );
     const originalRollout = rolloutRows[0];
     try {
@@ -2125,12 +2125,24 @@ describe("API integration baseline", () => {
           }),
         ]),
       );
-      expect(qualityResponse.body.rollouts.map((item) => item.channel)).toEqual(
-        expect.arrayContaining(["coach", "prospect"]),
-      );
-      expect(qualityResponse.body.rollouts).not.toContainEqual(
-        expect.objectContaining({ channel: "customer_account" }),
-      );
+      expect(qualityResponse.body.rollouts.map((item) => item.channel)).toEqual([
+        "coach",
+      ]);
+
+      const prospectRolloutResponse = await request(app)
+        .put("/api/mi-agent/coach/rollouts")
+        .set("Authorization", `Bearer ${adminLogin.body.token}`)
+        .send({
+          rollouts: [
+            {
+              channel: "prospect",
+              enabled: false,
+              rolloutPercentage: 0,
+              allowlist: [],
+            },
+          ],
+        });
+      expect(prospectRolloutResponse.status).toBe(400);
 
       const customerPlannerRolloutResponse = await request(app)
         .put("/api/mi-agent/coach/rollouts")
@@ -2153,7 +2165,7 @@ describe("API integration baseline", () => {
         .send({
           rollouts: [
             {
-              channel: "prospect",
+              channel: "coach",
               enabled: false,
               rolloutPercentage: 0,
               allowlist: [],
@@ -2162,7 +2174,7 @@ describe("API integration baseline", () => {
         });
       expect(rolloutResponse.status).toBe(200);
       expect(rolloutResponse.body.rollouts[0]).toMatchObject({
-        channel: "prospect",
+        channel: "coach",
         enabled: false,
         rolloutPercentage: 0,
       });
@@ -2174,7 +2186,7 @@ describe("API integration baseline", () => {
         await query(
           `UPDATE coach_channel_rollouts
            SET enabled = ?, rollout_percentage = ?, allowlist_json = ?
-           WHERE channel = 'prospect'`,
+           WHERE channel = 'coach'`,
           [
             originalRollout.enabled,
             originalRollout.rollout_percentage,
@@ -5074,36 +5086,6 @@ describe("API integration baseline", () => {
       [Number(sessionId)],
     );
     expect(stillPending[0].status).toBe("pending");
-
-    const prospectRolloutRows = await query(
-      `SELECT enabled, rollout_percentage, allowlist_json
-       FROM coach_channel_rollouts WHERE channel = 'prospect' LIMIT 1`,
-    );
-    const originalProspectRollout = prospectRolloutRows[0];
-    try {
-      await query(
-        `UPDATE coach_channel_rollouts SET enabled = FALSE WHERE channel = 'prospect'`,
-      );
-      // The rollout does not apply to Cuenta nueva: the chat stays open for every user.
-      const openJob = await request(app)
-        .post(`/api/prospect-research/sessions/${sessionId}/chat/jobs`)
-        .set("Authorization", prospectAuth)
-        .send({ question: "¿Qué hipótesis valido primero?" });
-      expect(openJob.status).toBe(202);
-    } finally {
-      await query(
-        `UPDATE coach_channel_rollouts
-         SET enabled = ?, rollout_percentage = ?, allowlist_json = ?
-         WHERE channel = 'prospect'`,
-        [
-          originalProspectRollout.enabled ? 1 : 0,
-          originalProspectRollout.rollout_percentage,
-          typeof originalProspectRollout.allowlist_json === "string"
-            ? originalProspectRollout.allowlist_json
-            : JSON.stringify(originalProspectRollout.allowlist_json ?? []),
-        ],
-      );
-    }
 
     const prospectChatJobCreateResponse = await request(app)
       .post(`/api/prospect-research/sessions/${sessionId}/chat/jobs`)
