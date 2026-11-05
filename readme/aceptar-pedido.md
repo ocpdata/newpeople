@@ -37,6 +37,28 @@ Formalizar la aceptación administrativa de cotizaciones ganadas y dar seguimien
 
 ## Reglas operativas
 
+### Convocados internos de Kick Off interno
+
+- Convocatoria y minuta se presentan en tarjetas diferenciadas. Los convocados
+  muestran nombre y correo en lineas separadas, resaltado de seleccion y contador.
+  Las fechas se alinean a la derecha en escritorio y se apilan en pantallas pequenas.
+
+- El selector incluye usuarios activos que no tengan el rol Vendedor y al vendedor
+  asignado a la oportunidad vinculada a la cotizacion. Excluye a los demas vendedores,
+  incluso si tienen otros roles. Sin vendedor asignado solo incluye no vendedores.
+  Se reconocen tanto Vendedor como sus variantes Vendedor con aprobacion IA y
+  Vendedor sin aprobacion IA (roles cuyo nombre empieza por "Vendedor ").
+- El vendedor asignado es seleccionable, no obligatorio ni seleccionado automaticamente.
+  Los catalogos de responsables de las otras etapas no se modifican.
+- La API devuelve este catalogo en `kickoffInternal.assignableUsers` y valida los
+  convocados tanto al guardar borradores como al enviar convocatorias o actualizar
+  los convocados de la etapa. No permite IDs inactivos, inexistentes u otros vendedores.
+- Las convocatorias historicas conservan sus asistentes. Si la ultima contiene
+  convocados no elegibles, la pantalla los advierte y permite retirarlos explicitamente
+  del nuevo borrador antes de guardar/enviar; no altera el historial.
+
+### Cierre y documentos
+
 - Solo cotizaciones en estado ganado/aceptado participan en esta bandeja.
 - La aceptación se considera acción administrativa de cierre comercial.
 - La trazabilidad documental de orden de compra/cotizaciones proveedor debe quedar guardada.

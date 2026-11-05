@@ -5,12 +5,19 @@ async function openProcessing(page, {
   failProviderRegistration = false, failProviderRemoval = false,
   accepted = false, acceptanceRecorded = accepted, failAcceptance = false,
   completionFailures = 0, staleList = false,
+  kickoffUsers = [], allUsers = kickoffUsers, previousKickoffAttendees = null,
 } = {}) {
   let quotationStatus = accepted ? "aceptada" : "ganada";
   let recorded = acceptanceRecorded;
   const transitions = [];
   const completions = [];
   const stageRequests = [];
+  const invitations = [];
+  const latestInvitation = previousKickoffAttendees ? {
+    id: 1, inviteSubject: "Convocatoria anterior", inviteBodyTemplate: "Mensaje anterior",
+    internalAttendeesUserIds: previousKickoffAttendees, statusCode: "draft",
+    meetingDate: "2026-11-06",
+  } : null;
   const stages = () => [
     { stageCode: "quotation_accepted", stageName: "Cotización aceptada",
       status: quotationStatus === "aceptada" ? "completed" : "not_started",
@@ -61,9 +68,15 @@ async function openProcessing(page, {
       latestCurrencyCode: "USD", activationStatusCode: "activada",
     }] });
     if (url.pathname === "/api/quotations/1/processing") return route.fulfill({
-      json: { quotation: { statusCode: quotationStatus }, permissions: { canUpdate },
+      json: { quotation: { statusCode: quotationStatus }, permissions: { canUpdate, canConvoke: canUpdate },
+        assignableUsers: allUsers,
+        kickoffInternal: { assignableUsers: kickoffUsers, latestInvitation, invitations: latestInvitation ? [latestInvitation] : [] },
         stages: stages() },
     });
+    if (url.pathname === "/api/quotations/1/processing/kickoff-internal/invitations") {
+      invitations.push(route.request().postDataJSON());
+      return route.fulfill({ json: { message: "Convocatoria guardada" } });
+    }
     if (url.pathname === "/api/quotation-versions/10/transition") {
       transitions.push(route.request().postDataJSON());
       if (failAcceptance) return route.fulfill({ status: 500, json: { message: "Error al aceptar cotización" } });
@@ -133,8 +146,91 @@ async function openProcessing(page, {
   await page.goto("/accept-order");
   await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
   return { registrations, removals, providerRegistrations, providerRemovals,
-    transitions, completions, stageRequests, value: () => value };
+    transitions, completions, stageRequests, invitations, value: () => value };
 }
+
+const assignedSeller = { id: 1, fullName: "Vendedor asignado", email: "assigned@example.test" };
+const otherSeller = { id: 2, fullName: "Otro vendedor", email: "other@example.test" };
+const operationsUser = { id: 3, fullName: "Operaciones", email: "ops@example.test" };
+const multiRoleSeller = { id: 4, fullName: "Vendedor multirrol", email: "multi@example.test" };
+
+test("organiza convocatoria y minuta con seleccion clara en escritorio y movil", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await openProcessing(page, { kickoffUsers: [assignedSeller, operationsUser] });
+  await page.getByRole("tab", { name: /Kick Off interno/ }).click();
+  const card = page.locator(".kickoff-internal-invitation-card");
+  const minutes = page.locator(".kickoff-internal-minutes-card");
+  const upload = minutes.getByLabel("Archivo de minuta (texto/audio)");
+  const attendees = page.getByRole("group", { name: "Convocados internos", exact: true });
+  await page.getByRole("checkbox", { name: /Operaciones/ }).check();
+  await expect(attendees.getByText("Seleccionados: 1", { exact: true })).toBeVisible();
+  await expect(attendees.locator(".is-selected")).toHaveCount(1);
+  const name = await attendees.locator(".is-selected strong").boundingBox();
+  const email = await attendees.locator(".is-selected small").boundingBox();
+  expect(email.y).toBeGreaterThan(name.y);
+  const picker = await attendees.boundingBox();
+  const dates = await card.locator(".kickoff-internal-right-field").first().boundingBox();
+  expect(dates.x).toBeGreaterThan(picker.x + picker.width);
+  await card.screenshot({ path: testInfo.outputPath("kickoff-desktop.png") });
+  await expect(upload).toBeVisible();
+  expect((await upload.boundingBox()).height).toBeGreaterThanOrEqual(64);
+  await minutes.screenshot({ path: testInfo.outputPath("minutes-desktop.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileAttendees = await attendees.boundingBox();
+  const mobileDates = await card.locator(".kickoff-internal-right-field").first().boundingBox();
+  expect(mobileDates.y).toBeGreaterThanOrEqual(mobileAttendees.y + mobileAttendees.height);
+  expect(await card.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await card.screenshot({ path: testInfo.outputPath("kickoff-mobile.png") });
+  expect((await upload.boundingBox()).height).toBeGreaterThanOrEqual(64);
+  expect(await minutes.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await minutes.screenshot({ path: testInfo.outputPath("minutes-mobile.png") });
+});
+
+test("convocados internos muestra solo el vendedor asignado y otros usuarios", async ({ page }) => {
+  const state = await openProcessing(page, {
+    kickoffUsers: [assignedSeller, operationsUser],
+    allUsers: [assignedSeller, otherSeller, operationsUser, multiRoleSeller],
+  });
+  await page.getByRole("tab", { name: /Kick Off interno/ }).click();
+  await expect(page.getByRole("checkbox", { name: /Vendedor asignado/ })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /Operaciones/ })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /Otro vendedor|Vendedor multirrol/ })).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: /Vendedor asignado/ })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: /Operaciones/ }).check();
+  await page.getByRole("button", { name: "Abrir vista previa de correo", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+  await expect.poll(() => state.invitations.length).toBe(1);
+  expect(state.invitations[0].internalAttendeesUserIds).toEqual([3]);
+});
+
+test("convocados historicos no elegibles se advierten sin eliminarlos silenciosamente", async ({ page }) => {
+  const state = await openProcessing(page, {
+    kickoffUsers: [assignedSeller, operationsUser],
+    allUsers: [assignedSeller, otherSeller, operationsUser],
+    previousKickoffAttendees: [2, 3],
+  });
+  await page.getByRole("tab", { name: /Kick Off interno/ }).click();
+  await expect(page.getByText(/La convocatoria anterior contiene convocados no disponibles/)).toBeVisible();
+  await expect(page.getByText("Seleccionados: 2", { exact: true })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /Otro vendedor/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Abrir vista previa de correo", exact: true }).click();
+  await expect(page.getByText("Retira los convocados internos no disponibles antes de preparar la convocatoria.", { exact: true })).toBeVisible();
+  expect(state.invitations).toHaveLength(0);
+  await page.getByRole("button", { name: "Cerrar notificacion de error", exact: true }).click();
+  await page.getByRole("button", { name: "Retirar convocado no disponible: Otro vendedor", exact: true }).click();
+  await expect(page.getByText("Seleccionados: 1", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Abrir vista previa de correo", exact: true }).click();
+  await page.getByRole("button", { name: "Guardar borrador", exact: true }).click();
+  await expect.poll(() => state.invitations.length).toBe(1);
+  expect(state.invitations[0].internalAttendeesUserIds).toEqual([3]);
+});
+
+test("sin vendedor asignado permite convocar a los demas usuarios", async ({ page }) => {
+  await openProcessing(page, { kickoffUsers: [operationsUser], allUsers: [otherSeller, operationsUser] });
+  await page.getByRole("tab", { name: /Kick Off interno/ }).click();
+  await expect(page.getByRole("checkbox", { name: /Operaciones/ })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: /vendedor/i })).toHaveCount(0);
+});
 
 async function expectAcceptedClosureLocked(page) {
   await expect(page.getByRole("button", { name: "Aceptada", exact: true })).toBeDisabled();

@@ -795,6 +795,11 @@ const permissions = [
     action: "procesamiento_convocar",
     description: "Enviar convocatorias de kick off",
   },
+  { id: 114, code: "reportes.access", module: "reportes", action: "access", description: "Entrar al modulo sin habilitar reportes" },
+  { id: 115, code: "reportes.oportunidades_cotizaciones.read", module: "reportes", action: "oportunidades_cotizaciones.read", description: "Consultar datos propios por vendedor asignado actual" },
+  { id: 116, code: "reportes.oportunidades_cotizaciones.read_all", module: "reportes", action: "oportunidades_cotizaciones.read_all", description: "Consultar todos los usuarios sin permisos de origen" },
+  { id: 117, code: "reportes.rentabilidad.read", module: "reportes", action: "rentabilidad.read", description: "Consultar rentabilidad propia con costos y margen" },
+  { id: 118, code: "reportes.rentabilidad.read_all", module: "reportes", action: "rentabilidad.read_all", description: "Consultar rentabilidad de todos los usuarios con costos y margen" },
 ];
 
 for (const width of [1280, 900]) {
@@ -803,7 +808,7 @@ for (const width of [1280, 900]) {
     await page.addInitScript(() => {
       localStorage.setItem("crm_token", "roles-layout-test");
     });
-    let selectedIds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113];
+    let selectedIds = permissions.map((permission) => permission.id);
     let savedIds;
     await page.route("**/api/**", async (route) => {
       const path = new URL(route.request().url()).pathname;
@@ -838,8 +843,26 @@ for (const width of [1280, 900]) {
     await page.goto("/roles");
     await page.getByRole("button", { name: /Equipo comercial/ }).click();
     const rows = page.locator(".permission-module-group .checkbox-grid > label");
-    await expect(rows).toHaveCount(113);
-    for (let index = 0; index < 113; index += 1) {
+    await expect(rows).toHaveCount(permissions.length);
+    const reportsGroup = page.locator(".permission-module-group").filter({
+      has: page.getByText("Reportes", { exact: true }),
+    });
+    await expect(reportsGroup.locator(".permission-code")).toHaveText([
+      "Acceder al modulo Reportes",
+      "Oportunidades y cotizaciones: datos propios",
+      "Oportunidades y cotizaciones: todos los usuarios",
+      "Rentabilidad: datos propios",
+      "Rentabilidad: todos los usuarios",
+    ]);
+    const reportTitle = reportsGroup.locator(".permission-module-header > span").first();
+    const reportDescription = reportsGroup.locator(".permission-module-description");
+    const titleBox = await reportTitle.boundingBox();
+    const descriptionBox = await reportDescription.boundingBox();
+    expect(descriptionBox.y).toBeGreaterThan(titleBox.y + titleBox.height);
+    await expect(reportDescription).toHaveCSS("text-transform", "none");
+    await expect(reportDescription).toHaveCSS("font-weight", "400");
+    await reportsGroup.screenshot({ path: `test-results/reportes-permisos-${width}.png` });
+    for (let index = 0; index < permissions.length; index += 1) {
       const row = rows.nth(index);
       await expect(row.getByRole("checkbox")).toBeChecked();
       const title = await row.locator(".permission-code").boundingBox();
@@ -1449,7 +1472,7 @@ for (const width of [1280, 900]) {
     await logisticsPermissionRow.locator(".permission-description").click();
     await expect(logisticsPermissionRow.getByRole("checkbox")).not.toBeChecked();
     await page.getByRole("button", { name: "Guardar", exact: true }).click();
-    await expect.poll(() => savedIds).toEqual([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113]);
+    await expect.poll(() => savedIds).toEqual(permissions.filter((permission) => permission.id !== 2).map((permission) => permission.id));
     await expect(page.getByText(/Permisos guardados correctamente/)).toBeVisible();
     await page.screenshot({ path: test.info().outputPath("roles-layout.png") });
   });

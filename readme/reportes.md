@@ -7,19 +7,74 @@
 - `/reports/opportunities-quotations` contiene el reporte Oportunidades y cotizaciones.
 - El reporte es de solo consulta: no crea ni modifica oportunidades, cotizaciones o estados.
 
+## Rentabilidad de oportunidades ganadas
+
+- Disponible en `/reports/opportunity-profitability` y en el catalogo de Reportes.
+  Tiene permisos y alcance propios, descritos abajo.
+- Incluye solo oportunidades con estado comercial `ganada` que tengan cotizaciones
+  cuya version vigente (`latest_version_id`) este `ganada` o `aceptada`.
+  No agrega condiciones de activacion diferentes de las del reporte general.
+- Una fila por oportunidad suma todas sus cotizaciones elegibles. No suma versiones
+  historicas, cotizaciones en otros estados ni el monto estimado de la oportunidad.
+- Muestra venta neta despues de descuentos y sin IVA, costo de productos, costo de
+  servicios, costo total, utilidad bruta y margen bruto porcentual.
+- Reutiliza el calculo de partidas hoja de cotizaciones (sin duplicar paquetes).
+  Los servicios corresponden a `servicio_propio`; las otras partidas hoja distintas
+  de `grupo_productos` corresponden a productos, siguiendo el modelo actual.
+  Los costos incluyen el descuento de fabricante y el costo de importacion.
+- El descuento global se aplica una sola vez; si ya esta distribuido por partida,
+  no se reaplica. Utilidad = venta neta - costo total. Margen = utilidad / venta
+  neta * 100; con venta cero se muestra "No calculable". Se conservan las perdidas.
+- Consolida en USD dividiendo venta y costos entre el tipo de cambio guardado en
+  cada cotizacion; USD no requiere conversion. Para otras monedas se exige moneda
+  informada y tasa positiva distinta de 1, igual que en el reporte general.
+- Si una cotizacion no puede convertirse, la oportunidad muestra "Total incompleto".
+  El resumen muestra solo el subtotal convertible, advierte cuantas cotizaciones
+  fueron excluidas de la conversion y no presenta un margen global.
+  El desglose conserva sus importes originales y muestra los equivalentes disponibles.
+- El resumen incluye todos los resultados filtrados, no solo la pagina visible.
+  El margen global se calcula sobre importes acumulados, no promediando porcentajes.
+- Filtros: busqueda, cliente, vendedor y fecha de cierre comercial (ambos extremos
+  inclusivos). Ordenamiento por oportunidad, nombre, venta, costo, utilidad o margen;
+  paginacion de 10, 50 o 100 oportunidades.
+- Es rentabilidad cotizada, no costo real de ejecucion. No incluye exportacion ni
+  comparacion cotizado contra real.
+
 ## Permisos y alcance
 
-Se requiere `oportunidades.read` o `oportunidades.read_all` y al menos uno de los
-permisos de consulta del modulo de cotizaciones: `cotizaciones.operacion`,
-`cotizaciones.revision`, `cotizaciones.ingreso`, `cotizaciones.aprobacion_humana`,
-`cotizaciones.aprobacion_ia`, `cotizaciones.administracion` o `cotizaciones.externo`.
-Los permisos de procesamiento de pedidos por si solos no conceden acceso.
+Los permisos se administran bajo el grupo **Reportes**:
 
-Los resultados, catalogos y totales se limitan a la interseccion de las cuentas
-autorizadas en ambos modulos. El alcance global requiere tanto
-`oportunidades.read_all` como `cotizaciones.administracion`; de lo contrario solo se
-consideran cuentas propias. No se muestran oportunidades cuyas cotizaciones no
-pueden consultarse, para evitar interpretar informacion restringida como ausente.
+| Permiso | Acceso |
+|---|---|
+| `reportes.access` | Entrar al modulo; sin permisos especificos muestra "No tienes reportes habilitados" |
+| `reportes.oportunidades_cotizaciones.read` | Oportunidades y cotizaciones propias |
+| `reportes.oportunidades_cotizaciones.read_all` | Oportunidades y cotizaciones de todos los usuarios |
+| `reportes.rentabilidad.read` | Rentabilidad propia, incluidos costos, utilidad y margen |
+| `reportes.rentabilidad.read_all` | Rentabilidad de todos los usuarios, incluidos costos, utilidad y margen |
+
+- Cualquier permiso especifico incluye entrada al modulo y todas las columnas y
+  detalles del reporte. No requiere `reportes.access` ni permisos de Oportunidades,
+  Cotizaciones o Cuentas. Los permisos de esos modulos ya no conceden acceso.
+- `.read_all` funciona sin `.read` y prevalece si los roles conceden ambos.
+  El alcance se resuelve por reporte; global en uno no amplia el otro.
+- Datos propios significa que `opportunities.seller_user_id` coincide con el usuario
+  autenticado. No depende del creador, preventa ni propietarios de la cuenta.
+  La reasignacion cambia el acceso inmediatamente; no es un alcance historico.
+  Sin oportunidades asignadas se devuelve un resultado vacio.
+- Filas, desglose, catalogos, conteos y totales aplican el mismo alcance en la API,
+  antes de filtros y paginacion. Un filtro por otro vendedor no amplia el acceso.
+  El selector de vendedor solo se ofrece con alcance global; la pantalla indica
+  "Mis datos" o "Todos los usuarios".
+- Cada reporte tiene su endpoint de catalogos: `/api/reports/opportunities-quotations/catalogs`
+  y `/api/reports/opportunity-profitability/catalogs`, protegido con su propio permiso.
+- El permiso de reporte no concede entrada, edicion ni descarga de documentos en
+  los modulos originales, cuyas autorizaciones se mantienen.
+- Los permisos se registran mediante `ensureCorePermissions` al iniciar la API.
+  Se conserva la politica de bootstrap: solo se asignan automaticamente a los roles
+  administrativos/sistema en la inicializacion de permisos de una instalacion nueva.
+  En instalaciones con permisos ya asignados se deben conceder explicitamente
+  desde Roles y permisos, incluso para roles administrativos que aun no los tengan.
+  No se migran automaticamente permisos de Oportunidades o Cotizaciones.
 
 ## Reglas del reporte
 
@@ -124,7 +179,9 @@ aceptacion. No se incluye filtro de fecha de aceptacion en esta version.
 - `GET /api/reports/opportunities-quotations/catalogs`
   devuelve cuentas y responsables dentro del alcance autorizado.
 - `GET /api/reports/opportunities-quotations`
-  devuelve `{page, pageSize, total, summary, items}`.
+  devuelve `{page, pageSize, total, scope, summary, items}`.
+- `GET /api/reports/opportunity-profitability` devuelve la misma estructura general
+  con metricas de rentabilidad y su propio alcance. `scope` es `own` o `all`.
 - Cada cotizacion incluye `purchaseOrders` con `documentId`, `source`,
   `originalFileName`, `amount` y `currencyCode` por orden.
 - `summary.quotedUsd` incluye `amount`, `matchingAmount`, `missingCount` y

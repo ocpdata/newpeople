@@ -1,5 +1,20 @@
 export const DEFAULT_QUOTATION_VAT_PCT = 16;
 
+export function buildQuotationVersionNetSaleSql({
+  versionAlias = "lv",
+  totalsAlias = "latest_total",
+} = {}) {
+  const sale = `COALESCE(${totalsAlias}.base_sale_total, 0)`;
+  return `CASE
+    WHEN ${versionAlias}.id IS NULL THEN NULL
+    WHEN ${versionAlias}.summary_distribution_mode = 'per_item' THEN ${sale}
+    WHEN ${versionAlias}.summary_discount_mode = 'amount'
+      THEN GREATEST(${sale} - LEAST(COALESCE(${versionAlias}.summary_discount_value, 0), ${sale}), 0)
+    WHEN ${versionAlias}.summary_discount_mode = 'percentage'
+      THEN ${sale} * (1 - LEAST(GREATEST(COALESCE(${versionAlias}.summary_discount_value, 0), 0), 100) / 100)
+    ELSE ${sale} END`;
+}
+
 export function buildQuotationVersionBaseSaleTotalJoin(versionAlias = "lv") {
   return `LEFT JOIN (
       SELECT qs.quotation_version_id,

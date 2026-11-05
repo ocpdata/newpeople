@@ -2,6 +2,26 @@ import { query, withTransaction } from "./db.js";
 
 const CORE_PERMISSIONS = [
   {
+    code: "reportes.access", module: "reportes", action: "access",
+    description: "Entrar al modulo Reportes. No habilita ningun reporte por si solo.",
+  },
+  {
+    code: "reportes.oportunidades_cotizaciones.read", module: "reportes", action: "oportunidades_cotizaciones.read",
+    description: "Consultar Oportunidades y cotizaciones de las oportunidades donde es el vendedor asignado actual. Incluye acceso al modulo y al detalle completo del reporte, sin permisos de otros modulos.",
+  },
+  {
+    code: "reportes.oportunidades_cotizaciones.read_all", module: "reportes", action: "oportunidades_cotizaciones.read_all",
+    description: "Consultar Oportunidades y cotizaciones de todos los usuarios. Incluye acceso al modulo y al reporte completo; no requiere el permiso de datos propios ni permisos de otros modulos.",
+  },
+  {
+    code: "reportes.rentabilidad.read", module: "reportes", action: "rentabilidad.read",
+    description: "Consultar Rentabilidad de oportunidades ganadas donde es el vendedor asignado actual, incluidos costos, utilidad y margen. Incluye acceso al modulo; no requiere permisos de otros modulos.",
+  },
+  {
+    code: "reportes.rentabilidad.read_all", module: "reportes", action: "rentabilidad.read_all",
+    description: "Consultar Rentabilidad de oportunidades ganadas de todos los usuarios, incluidos costos, utilidad y margen. Incluye acceso al modulo; no requiere el permiso de datos propios ni permisos de otros modulos.",
+  },
+  {
     code: "configuracion.read",
     module: "configuracion",
     action: "read",

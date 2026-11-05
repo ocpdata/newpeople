@@ -72,6 +72,8 @@ function formatPermissionModuleName(moduleName) {
 }
 
 const PERMISSION_MODULE_DESCRIPTIONS = {
+  reportes:
+    "Habilita cada reporte de forma independiente, sin permisos de los modulos de origen. Datos propios corresponde al vendedor asignado actual de la oportunidad; todos los usuarios permite consulta global. Cada permiso de reporte incluye acceso al modulo y a todas sus columnas y detalles.",
   roles:
     "Define los perfiles de acceso: consulta roles y sus usuarios, crea roles personalizados y administra sus permisos. Asignar roles a usuarios requiere un permiso aparte.",
   registros_fabricantes:
@@ -128,6 +130,11 @@ const PERMISSION_MODULE_DESCRIPTIONS = {
     "Organiza documentos internos por temas para que la IA los consulte como fuente de conocimiento. La biblioteca permite revisar los temas y documentos, mientras que los permisos de administración controlan su importación, carga, actualización, clasificación y eliminación. El acceso a esta pantalla no es requisito para consultar documentos activos desde el chatbot.",
 };
 const ROLE_PERMISSION_LABELS = {
+  "reportes.access": { label: "Acceder al modulo Reportes" },
+  "reportes.oportunidades_cotizaciones.read": { label: "Oportunidades y cotizaciones: datos propios" },
+  "reportes.oportunidades_cotizaciones.read_all": { label: "Oportunidades y cotizaciones: todos los usuarios" },
+  "reportes.rentabilidad.read": { label: "Rentabilidad: datos propios" },
+  "reportes.rentabilidad.read_all": { label: "Rentabilidad: todos los usuarios" },
   "roles.read": {
     label: "Consultar roles",
     description:

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { query, withTransaction } from "../db.js";
 import { ensureQuotationWonDocumentsSchema } from "../quotation-won-documents-schema.js";
+import { requireReportScope } from "./permissions.js";
 import {
   buildQuotationVersionBaseSaleTotalJoin,
   buildQuotationVersionEffectiveTotalSql,
@@ -40,13 +41,11 @@ export const reportFiltersSchema = z.object({
   path: ["dateTo"],
 });
 
-export function buildReportSelection(user, filters) {
+export function buildReportSelection(user, filters, report = "opportunitiesQuotations") {
   const params = [];
   const scope = ["ocs.code <> 'anulada'"];
-  // Both modules must allow the account; global access in one does not widen the other.
-  if (!user.permissionSet.has("oportunidades.read_all") ||
-      !user.permissionSet.has("cotizaciones.administracion")) {
-    scope.push("EXISTS (SELECT 1 FROM account_owners ao WHERE ao.account_id = o.account_id AND ao.user_id = ?)");
+  if (requireReportScope(user, report) === "own") {
+    scope.push("o.seller_user_id = ?");
     params.push(Number(user.id));
   }
   for (const [key, column] of [
@@ -252,7 +251,7 @@ async function readReport(user, filters, read) {
   ) : [];
 
   return {
-    page, pageSize: filters.pageSize, total,
+    page, pageSize: filters.pageSize, total, scope: requireReportScope(user, "opportunitiesQuotations"),
     summary: {
       opportunityCount: total,
       wonCount: Number(summary.won_count),
@@ -297,11 +296,14 @@ async function readReport(user, filters, read) {
   };
 }
 
-export async function getReportCatalogs(user) {
-  const { cte, params } = buildReportSelection(user, reportFiltersSchema.parse({}));
+export async function getReportCatalogs(user, report = "opportunitiesQuotations") {
+  const filters = reportFiltersSchema.parse(report === "profitability" ? {
+    commercialStatuses: "ganada", quotationStatuses: "ganada,aceptada",
+  } : {});
+  const { cte, params } = buildReportSelection(user, filters, report);
   const rows = await query(`${cte}
     ${reportSelect} DISTINCT account_id, account_name, seller_user_id, seller_name, presales_user_id, presales_name
-    FROM scoped_opportunities ORDER BY account_name`, params);
+    FROM selected_opportunities ORDER BY account_name`, params);
   const unique = (idKey, nameKey) => [...new Map(rows.filter((row) => row[idKey] != null)
     .map((row) => [Number(row[idKey]), { id: Number(row[idKey]), name: row[nameKey] }])).values()];
   return {

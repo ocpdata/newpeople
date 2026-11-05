@@ -70,7 +70,7 @@ function requestParams(filters, page) {
     .filter(([, value]) => value !== ""));
 }
 
-export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
+export default function OpportunitiesQuotationsReportPage({ canReadReport, scope }) {
   const [draft, setDraft] = useState(INITIAL_FILTERS);
   const [applied, setApplied] = useState({ filters: INITIAL_FILTERS, page: 1 });
   const [catalogs, setCatalogs] = useState({ accounts: [], sellers: [], presales: [] });
@@ -146,12 +146,13 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
         <div>
           <Link to="/reports">Volver a Reportes</Link>
           <h2>Oportunidades y cotizaciones</h2>
+          {canReadReport && <p>Alcance: {scope === "all" ? "Todos los usuarios" : "Mis datos (vendedor asignado actual)"}</p>}
           <p>Consulta de solo lectura. Se evalúa únicamente la versión actual de cada cotización.</p>
         </div>
       </header>
       {!canReadReport ? (
         <p className="panel" role="alert">
-          Acceso insuficiente: necesitas permisos de consulta de oportunidades y cotizaciones.
+          Acceso insuficiente: necesitas un permiso del reporte Oportunidades y cotizaciones.
         </p>
       ) : (
         <>
@@ -173,7 +174,7 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
               {select("preset", "Consulta rápida", PRESETS)}
               <label>Buscar oportunidad o cuenta<input type="search" maxLength={200} value={draft.search} onChange={(event) => update("search", event.target.value)} placeholder="Nombre o ID de oportunidad" /></label>
               {select("accountId", "Cuenta", [["", "Todas"], ...catalogs.accounts.map((item) => [item.id, item.name])])}
-              {select("sellerUserId", "Vendedor", [["", "Todos"], ...catalogs.sellers.map((item) => [item.id, item.name])])}
+              {scope === "all" && select("sellerUserId", "Vendedor", [["", "Todos"], ...catalogs.sellers.map((item) => [item.id, item.name])])}
               {select("presalesUserId", "Preventa", [["", "Todos"], ...catalogs.presales.map((item) => [item.id, item.name])])}
               {select("quotationPresence", "Con cotizaciones", [["all", "Todas"], ["with", "Con cotizaciones"], ["without", "Sin cotizaciones"]])}
             </div>

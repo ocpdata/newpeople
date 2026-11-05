@@ -2,6 +2,35 @@
   min-width: 0;
 }
 
+.opportunity-profitability-report .profitability-filters {
+  margin: 20px 0;
+}
+
+.opportunity-profitability-report .profitability-negative {
+  color: #b42318;
+}
+
+.opportunity-profitability-report .profitability-warning {
+  padding: 12px;
+  border: 1px solid #e8c67b;
+  border-radius: 8px;
+  background: #fff9eb;
+  color: #794c0a;
+}
+
+.opportunity-profitability-report .profitability-caption {
+  text-align: left;
+  padding: 12px;
+  color: #52657c;
+  font-size: 13px;
+}
+
+@media (min-width: 1100px) {
+  .opportunities-quotations-report.opportunity-profitability-report .report-totals {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 .opportunities-quotations-report,
 .opportunities-quotations-report .report-results {
   min-width: 0;

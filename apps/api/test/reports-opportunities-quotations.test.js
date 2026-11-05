@@ -22,6 +22,7 @@ import {
   listOpportunitiesQuotationsReport,
   reportFiltersSchema,
 } from "../src/reports/opportunities-quotations.js";
+import { listOpportunityProfitability, profitabilityFiltersSchema } from "../src/reports/opportunity-profitability.js";
 
 let connection;
 let fixtureTableNames = [];
@@ -35,14 +36,27 @@ async function refreshFixtures() {
     fixtureCtes.push(`${name} AS (${selects.join(" UNION ALL ")})`);
   }
 }
-const user = (permissions = ["oportunidades.read", "cotizaciones.operacion"]) => ({
+const user = (permissions = ["reportes.oportunidades_cotizaciones.read", "reportes.rentabilidad.read"]) => ({
   id: 19, permissionSet: new Set(permissions),
 });
 const report = (filters = {}, currentUser = user()) =>
   listOpportunitiesQuotationsReport(currentUser, reportFiltersSchema.parse(filters));
+const profitability = (filters = {}, currentUser = user()) =>
+  listOpportunityProfitability(currentUser, profitabilityFiltersSchema.parse(filters));
+
+async function withChanges(updates, restore, check) {
+  try {
+    for (const statement of updates) await connection.query(statement);
+    await refreshFixtures();
+    await check();
+  } finally {
+    for (const statement of restore) await connection.query(statement);
+    await refreshFixtures();
+  }
+}
 
 beforeAll(async () => {
-  connection = await mysql.createConnection(config.db);
+  connection = await mysql.createConnection({ ...config.db, decimalNumbers: true });
   await connection.query("SET SESSION max_execution_time = 2000");
   // Temporary fixtures shadow real tables and disappear with this connection.
   const tables = {
@@ -92,6 +106,7 @@ beforeAll(async () => {
       [1, 3, 4, 6].includes(id) ? 2 : 1,
     ]);
   }
+  await connection.query("UPDATE opportunities SET seller_user_id = 20 WHERE id = 6");
   const quotations = [
     [201, 2, 2011, 1, 1, "MXN", 200],
     [301, 3, 3011, 1, 1, "USD", 100],
@@ -141,7 +156,7 @@ describe("Opportunity and quotation report", () => {
       await connection.query("UPDATE opportunities SET commercial_status_id = 3 WHERE id = 6");
       await connection.query("UPDATE quotation_versions SET status_id = 4 WHERE id IN (3011, 5012)");
       await refreshFixtures();
-      const currentUser = user(["oportunidades.read_all", "cotizaciones.administracion"]);
+      const currentUser = user(["reportes.oportunidades_cotizaciones.read_all"]);
       const result = await report({}, currentUser);
       expect(result.items.map((item) => item.id)).toEqual([5, 4, 3, 2, 1]);
       expect(result.items.find((item) => item.id === 5).quotations).toEqual([]);
@@ -344,17 +359,17 @@ describe("Opportunity and quotation report", () => {
   });
 
   it.each([
-    ["oportunidades.read_all", "cotizaciones.operacion"],
-    ["oportunidades.read", "cotizaciones.administracion"],
-  ])("intersects both account scopes: %s", async (...permissions) => {
+    ["reportes.oportunidades_cotizaciones.read"],
+    ["reportes.oportunidades_cotizaciones.read", "oportunidades.read_all", "cotizaciones.administracion"],
+  ])("keeps own seller scope regardless of source permissions: %s", async (...permissions) => {
     const result = await report({}, user(permissions));
     expect(result.total).toBe(5);
     expect(result.summary.opportunityAmountUsd).toBe(1500);
     expect((await getReportCatalogs(user(permissions))).accounts).toEqual([{ id: 1, name: "Visible" }]);
   });
 
-  it("only grants global scope when both modules allow it", async () => {
-    expect((await report({}, user(["oportunidades.read_all", "cotizaciones.administracion"]))).total).toBe(6);
+  it("grants global scope with the report permission alone", async () => {
+    expect((await report({}, user(["reportes.oportunidades_cotizaciones.read_all"]))).total).toBe(6);
   });
 
   it.each([
@@ -376,12 +391,15 @@ describe("Report HTTP access and validation", () => {
     return app;
   };
   it.each([
-    [], ["oportunidades.read"], ["cotizaciones.operacion"],
+    [], ["oportunidades.read"], ["cotizaciones.operacion"], ["reportes.access"],
+    ["oportunidades.read_all", "cotizaciones.administracion"],
     ["oportunidades.read", "aceptar_pedido.procesamiento.read"],
   ].map((permissions) => ({ permissions })))("denies incomplete permissions $permissions", async ({ permissions }) => {
     const app = appFor(user(permissions));
     expect((await request(app).get("/api/reports/opportunities-quotations")).status).toBe(403);
     expect((await request(app).get("/api/reports/opportunities-quotations/catalogs")).status).toBe(403);
+    expect((await request(app).get("/api/reports/opportunity-profitability")).status).toBe(403);
+    expect((await request(app).get("/api/reports/opportunity-profitability/catalogs")).status).toBe(403);
   });
   it("returns 400 for invalid filters and the expected response shape for valid requests", async () => {
     const app = appFor(user());
@@ -389,5 +407,242 @@ describe("Report HTTP access and validation", () => {
     const response = await request(app).get("/api/reports/opportunities-quotations?preset=both");
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ total: 1, page: 1, pageSize: 10, summary: { opportunityCount: 1 } });
+    expect((await request(app).get("/api/reports/opportunity-profitability?page=-1")).status).toBe(400);
+    const profitabilityResponse = await request(app).get("/api/reports/opportunity-profitability");
+    expect(profitabilityResponse.status).toBe(200);
+    expect(profitabilityResponse.body).toMatchObject({
+      total: 2, summary: { opportunityCount: 2, quotationCount: 2, totals: { sale: 180, totalCost: 200, profit: -20 } },
+    });
+  });
+
+  it.each([
+    ["reportes.oportunidades_cotizaciones.read", "/opportunities-quotations", "/opportunity-profitability", "own"],
+    ["reportes.oportunidades_cotizaciones.read_all", "/opportunities-quotations", "/opportunity-profitability", "all"],
+    ["reportes.rentabilidad.read", "/opportunity-profitability", "/opportunities-quotations", "own"],
+    ["reportes.rentabilidad.read_all", "/opportunity-profitability", "/opportunities-quotations", "all"],
+  ])("authorizes %s alone and denies the other report and its catalogs", async (permission, allowed, denied, scope) => {
+    const app = appFor(user([permission]));
+    const result = await request(app).get(`/api/reports${allowed}`);
+    expect(result.status).toBe(200);
+    expect(result.body.scope).toBe(scope);
+    expect((await request(app).get(`/api/reports${allowed}/catalogs`)).status).toBe(200);
+    expect((await request(app).get(`/api/reports${denied}`)).status).toBe(403);
+    expect((await request(app).get(`/api/reports${denied}/catalogs`)).status).toBe(403);
+  });
+});
+
+describe("Report data isolation", () => {
+  it("uses seller assignment, not account ownership, and applies reassignment immediately", async () => {
+    await withChanges([
+      "UPDATE opportunities SET seller_user_id = 20 WHERE id = 3",
+      "UPDATE opportunities SET seller_user_id = 19 WHERE id = 6",
+    ], [
+      "UPDATE opportunities SET seller_user_id = 19 WHERE id = 3",
+      "UPDATE opportunities SET seller_user_id = 20 WHERE id = 6",
+    ], async () => {
+      const current = user();
+      const result = await report({}, current);
+      expect(result.scope).toBe("own");
+      expect(result.items.map((row) => row.id)).toEqual([6, 5, 4, 2, 1]);
+      expect(result.items.flatMap((row) => row.quotations).map((q) => q.id)).not.toContain(301);
+      const catalogs = await getReportCatalogs(current);
+      expect(catalogs.sellers).toEqual([{ id: 19, name: "Vendedor" }]);
+      expect(catalogs.accounts).toEqual([{ id: 2, name: "Ajena" }, { id: 1, name: "Visible" }]);
+      expect((await profitability()).items.map((row) => row.id)).toEqual([6, 4]);
+    });
+  });
+
+  it("does not widen own scope through filters, catalogs or totals", async () => {
+    expect((await report({ sellerUserId: 20 })).total).toBe(0);
+    expect((await report({ accountId: 2 })).summary.quotationCount).toBe(0);
+    expect((await profitability({ sellerUserId: 20 })).total).toBe(0);
+    expect((await profitability({ accountId: 2 })).summary.totals.sale).toBe(0);
+    expect((await getReportCatalogs(user(), "profitability")).accounts).toEqual([{ id: 1, name: "Visible" }]);
+    expect((await getReportCatalogs(user(), "profitability")).sellers).toEqual([{ id: 19, name: "Vendedor" }]);
+  });
+
+  it("supports global in one report and own in another without source module permissions", async () => {
+    const current = user(["reportes.oportunidades_cotizaciones.read_all", "reportes.rentabilidad.read"]);
+    expect((await report({}, current)).total).toBe(6);
+    expect((await profitability({}, current)).total).toBe(2);
+    expect((await getReportCatalogs(current)).accounts).toHaveLength(2);
+    expect((await getReportCatalogs(current, "profitability")).accounts).toHaveLength(1);
+  });
+
+  it("prefers all when both permissions exist and returns empty for unassigned users", async () => {
+    expect((await report({}, user(["reportes.oportunidades_cotizaciones.read", "reportes.oportunidades_cotizaciones.read_all"]))).scope).toBe("all");
+    const unassigned = { ...user(), id: 999 };
+    expect((await report({}, unassigned)).total).toBe(0);
+    expect((await profitability({}, unassigned)).summary.quotationCount).toBe(0);
+    expect(await getReportCatalogs(unassigned)).toEqual({ accounts: [], sellers: [], presales: [] });
+  });
+
+  it("rejects unauthorized service calls even without HTTP middleware", async () => {
+    await expect(report({}, user(["oportunidades.read_all", "cotizaciones.administracion"]))).rejects.toMatchObject({ status: 403 });
+    await expect(profitability({}, user(["reportes.oportunidades_cotizaciones.read_all"]))).rejects.toMatchObject({ status: 403 });
+    await expect(getReportCatalogs(user(["reportes.access"]))).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe("Won opportunity profitability", () => {
+  it("requires both a won opportunity and current won or accepted quotations", async () => {
+    const result = await profitability();
+    expect(result.items.map((row) => row.id)).toEqual([4, 3]);
+    expect(result.items.flatMap((row) => row.quotations).map((q) => q.id)).toEqual([401, 301]);
+    expect(result.summary).toMatchObject({
+      opportunityCount: 2, quotationCount: 2, missingCount: 0,
+      totals: { sale: 180, productCost: 200, serviceCost: 0, totalCost: 200, profit: -20 },
+    });
+    expect(result.summary.totals.marginPct).toBeCloseTo(-11.111111);
+  });
+
+  it("sums multiple eligible quotations, separates services and calculates weighted margins", async () => {
+    await withChanges([
+      "UPDATE quotation_versions SET status_id = 2 WHERE id = 3021",
+      "UPDATE quotation_section_items SET item_type = 'servicio_propio', profit_margin_pct = 50 WHERE id = 3021",
+      "UPDATE quotation_section_items SET profit_margin_pct = 20 WHERE id = 3011",
+    ], [
+      "UPDATE quotation_versions SET status_id = 3 WHERE id = 3021",
+      "UPDATE quotation_section_items SET item_type = 'producto', profit_margin_pct = 0 WHERE id IN (3011, 3021)",
+    ], async () => {
+      const result = await profitability();
+      const row = result.items.find((item) => item.id === 3);
+      expect(row.quotationCount).toBe(2);
+      expect(row.totals).toMatchObject({ sale: 202.5, productCost: 100, serviceCost: 50, totalCost: 150, profit: 52.5 });
+      expect(row.totals.marginPct).toBeCloseTo(52.5 / 202.5 * 100);
+      expect(result.summary.totals.marginPct).toBeCloseTo(42.5 / 292.5 * 100);
+    });
+  });
+
+  it("does not recover historical accepted versions when the current quotation is a draft", async () => {
+    await withChanges([
+      "UPDATE opportunities SET commercial_status_id = 2 WHERE id = 5",
+    ], [
+      "UPDATE opportunities SET commercial_status_id = 1 WHERE id = 5",
+    ], async () => {
+      expect((await profitability()).items.map((row) => row.id)).toEqual([4, 3]);
+    });
+  });
+
+  it.each([
+    ["total", "percentage", 10, "total", 90],
+    ["per_item", "percentage", 10, "total", 90],
+    ["none", "amount", 25, "total", 75],
+    ["total", "amount", 200, "total", 0],
+    ["total", "percentage", 10, "per_item", 100],
+  ])("excludes VAT and applies discounts once: %s %s %s %s", async (vat, discountMode, discount, distribution, sale) => {
+    await withChanges([
+      `UPDATE quotation_versions SET summary_vat_mode = '${vat}', summary_discount_mode = '${discountMode}',
+        summary_discount_value = ${discount}, summary_distribution_mode = '${distribution}' WHERE id = 3011`,
+    ], [
+      "UPDATE quotation_versions SET summary_vat_mode = 'total', summary_discount_mode = 'percentage', summary_discount_value = 10, summary_distribution_mode = 'total' WHERE id = 3011",
+    ], async () => {
+      const row = (await profitability({ search: "Oportunidad 3" })).items[0];
+      expect(row.totals.sale).toBe(sale);
+      expect(row.totals.totalCost).toBe(100);
+      if (sale === 0) expect(row.totals.marginPct).toBeNull();
+    });
+  });
+
+  it("converts sale and both costs using each saved exchange rate", async () => {
+    await withChanges([
+      "UPDATE quotation_versions SET status_id = 2, currency_code = 'MXN', exchange_rate = 20 WHERE id = 3021",
+      "UPDATE quotation_section_items SET item_type = 'servicio_propio' WHERE id = 3021",
+    ], [
+      "UPDATE quotation_versions SET status_id = 3, currency_code = 'USD', exchange_rate = 1 WHERE id = 3021",
+      "UPDATE quotation_section_items SET item_type = 'producto' WHERE id = 3021",
+    ], async () => {
+      const row = (await profitability({ search: "Oportunidad 3" })).items[0];
+      expect(row.totals).toMatchObject({ sale: 92.25, productCost: 100, serviceCost: 2.5, totalCost: 102.5, profit: -10.25 });
+      const converted = row.quotations.find((q) => q.id === 302);
+      expect(converted.original).toMatchObject({ sale: 45, serviceCost: 50 });
+      expect(converted.usd).toMatchObject({ sale: 2.25, serviceCost: 2.5 });
+    });
+  });
+
+  it("uses leaf items without counting bundle parents and applies manufacturer and final discounts", async () => {
+    await withChanges([
+      "UPDATE quotation_section_items SET manufacturer_discount_pct = 20, import_cost_pct = 25, profit_margin_pct = 50, final_discount_pct = 10, bundle_parent_item_id = 9900 WHERE id = 3011",
+      "INSERT INTO quotation_section_items VALUES (9900, 3011, 1, 9999, 0, 0, 0, 0, 'producto', NULL)",
+      "INSERT INTO quotation_section_items VALUES (9901, 3011, 1, 9999, 0, 0, 0, 0, 'grupo_productos', NULL)",
+    ], [
+      "UPDATE quotation_section_items SET manufacturer_discount_pct = 0, import_cost_pct = 0, profit_margin_pct = 0, final_discount_pct = 0, bundle_parent_item_id = NULL WHERE id = 3011",
+      "DELETE FROM quotation_section_items WHERE id IN (9900, 9901)",
+    ], async () => {
+      const row = (await profitability({ search: "Oportunidad 3" })).items[0];
+      expect(row.totals).toMatchObject({ sale: 162, productCost: 100, serviceCost: 0, totalCost: 100, profit: 62 });
+    });
+  });
+
+  it.each([null, 0, -5, 1])("marks partial totals explicitly for invalid saved rate %s", async (rate) => {
+    await withChanges([
+      `UPDATE quotation_versions SET currency_code = 'MXN', exchange_rate = ${rate === null ? "NULL" : rate} WHERE id = 3011`,
+    ], [
+      "UPDATE quotation_versions SET currency_code = 'USD', exchange_rate = 1 WHERE id = 3011",
+    ], async () => {
+      const result = await profitability();
+      expect(result.items.find((row) => row.id === 3)).toMatchObject({
+        missingCount: 1, totals: null, quotations: [{ usd: null, original: { sale: 90, totalCost: 100 } }],
+      });
+      expect(result.summary).toMatchObject({
+        missingCount: 1, totals: null, convertibleSubtotal: { sale: 90, totalCost: 100, profit: -10 },
+      });
+    });
+  });
+
+  it("applies closing dates, account and seller filters and handles empty results", async () => {
+    expect((await profitability({ dateFrom: "2026-11-03", dateTo: "2026-11-03", accountId: 1, sellerUserId: 19 })).total).toBe(2);
+    expect((await profitability({ dateFrom: "2026-11-04" })).total).toBe(0);
+    expect((await profitability({ sellerUserId: 20 })).items).toEqual([]);
+    expect((await profitability({ search: "inexistente" })).summary.totals).toEqual({
+      sale: 0, productCost: 0, serviceCost: 0, totalCost: 0, profit: 0, marginPct: null,
+    });
+  });
+
+  it("sorts financial results and keeps the summary across pages", async () => {
+    const insert = Array.from({ length: 11 }, (_, i) => {
+      const id = 10 + i;
+      return [
+        `INSERT INTO opportunities VALUES (${id}, 'Extra ${id}', 1, 0, '2026-11-15', '2026-11-03', 19, 20, 1, 2, 1)`,
+        `INSERT INTO quotations VALUES (${id}, ${id}, ${id}, 1)`,
+        `INSERT INTO quotation_versions VALUES (${id}, ${id}, 1, 'Extra', '2026-11-02', 'USD', 1, 2, 'percentage', 0, 'total', 'total', 16)`,
+        `INSERT INTO quotation_sections VALUES (${id}, ${id})`,
+        `INSERT INTO quotation_section_items VALUES (${id}, ${id}, 1, ${id}, 0, 0, 50, 0, 'producto', NULL)`,
+      ];
+    }).flat();
+    await withChanges(insert, [
+      "DELETE FROM quotation_section_items WHERE id BETWEEN 10 AND 20",
+      "DELETE FROM quotation_sections WHERE id BETWEEN 10 AND 20",
+      "DELETE FROM quotation_versions WHERE id BETWEEN 10 AND 20",
+      "DELETE FROM quotations WHERE id BETWEEN 10 AND 20",
+      "DELETE FROM opportunities WHERE id BETWEEN 10 AND 20",
+    ], async () => {
+      const first = await profitability({ sort: "profit", direction: "desc" });
+      const second = await profitability({ sort: "profit", direction: "desc", page: 2 });
+      expect(first.total).toBe(13);
+      expect(first.items).toHaveLength(10);
+      expect(second.items).toHaveLength(3);
+      expect(first.items[0].id).toBe(20);
+      expect(second.summary).toEqual(first.summary);
+      expect(first.summary.totals.sale).toBe(510);
+      expect(first.summary.quotationCount).toBe(13);
+      expect((await profitability({ page: 100 })).page).toBe(2);
+    });
+  });
+
+  it.each([
+    ["reportes.rentabilidad.read", 2],
+    ["reportes.rentabilidad.read_all", 3],
+  ])("applies independent profitability scope for %s", async (permission, count) => {
+    expect((await profitability({}, user([permission]))).total).toBe(count);
+  });
+
+  it.each([
+    { dateFrom: "2026-11-30", dateTo: "2026-11-01" },
+    { dateFrom: "2026-02-30" }, { page: 0 }, { pageSize: 1000 },
+    { sort: "id; DROP TABLE opportunities" }, { accountId: "invalid" },
+    { commercialStatuses: "en_proceso" }, { quotationStatuses: "borrador" },
+  ])("rejects malformed or scope-widening filters %j", (filters) => {
+    expect(profitabilityFiltersSchema.safeParse(filters).success).toBe(false);
   });
 });

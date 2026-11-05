@@ -1,6 +1,6 @@
 import DashboardHubCard from "./DashboardHubCard";
 
-export default function ReportsPage({ canReadReport }) {
+export default function ReportsPage({ canAccess, canReadOpportunitiesQuotations, canReadProfitability }) {
   return (
     <section className="dashboard-home-page">
       <header className="panel dashboard-home-hero">
@@ -16,18 +16,25 @@ export default function ReportsPage({ canReadReport }) {
           <div>
             <h3>Reportes disponibles</h3>
           </div>
-          {canReadReport ? (
+          {!canAccess ? <p role="alert">No tienes permiso para acceder a Reportes.</p> : canReadOpportunitiesQuotations || canReadProfitability ? (
             <div className="dashboard-hub-grid">
-              <DashboardHubCard
+              {canReadProfitability && <DashboardHubCard
+                title="Rentabilidad de oportunidades ganadas"
+                description="Consulta venta, costos y margen de las cotizaciones ganadas y aceptadas, consolidados por oportunidad."
+                to="/reports/opportunity-profitability"
+                cta="Abrir reporte"
+                meta="Comercial · USD"
+              />}
+              {canReadOpportunitiesQuotations && <DashboardHubCard
                 title="Oportunidades y cotizaciones"
                 description="Identifica oportunidades ganadas, cotizaciones aceptadas y sus combinaciones."
                 to="/reports/opportunities-quotations"
                 cta="Abrir reporte"
                 meta="Comercial"
-              />
+              />}
             </div>
           ) : (
-            <p>No hay reportes disponibles con tus permisos actuales. Este reporte requiere consultar oportunidades y cotizaciones.</p>
+            <p>No tienes reportes habilitados.</p>
           )}
         </div>
       </section>

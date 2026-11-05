@@ -28,7 +28,7 @@ test("organiza las opciones autorizadas en seis divisiones sin cambiar rutas", a
     "enablement_comercial.use", "registros_fabricantes.read", "campanas.read",
     "landing.read", "proveedores.read", "aceptar_pedido.procesamiento.read",
     "usuarios.read", "roles.read", "proceso_comercial_config.read", "configuracion.read",
-    "documentacion_rag.access", "herramientas.read", "pruebas.read", "audit.read",
+    "documentacion_rag.access", "herramientas.read", "pruebas.read", "audit.read", "reportes.access",
   ]);
   const expected = [
     ["Inicio", [
@@ -71,13 +71,20 @@ test("organiza las opciones autorizadas en seis divisiones sin cambiar rutas", a
 });
 
 test("abre el módulo de reportes sin mostrar reportes no autorizados", async ({ page }) => {
-  await openApp(page, []);
+  await openApp(page, ["reportes.access"]);
   const sidebar = page.locator(".sidebar");
   await expect(sidebar.getByRole("link", { name: "Reportes" })).toHaveAttribute("href", "/reports");
   await sidebar.getByRole("link", { name: "Reportes" }).click();
   await expect(page.locator("h2")).toHaveText("Reportes");
-  await expect(page.getByText(/No hay reportes disponibles con tus permisos actuales/)).toBeVisible();
+  await expect(page.getByText("No tienes reportes habilitados.")).toBeVisible();
   await expect(page.getByRole("link", { name: /Cuota mensual/ })).toHaveCount(0);
+});
+
+test("oculta Reportes sin permisos y protege su ruta directa", async ({ page }) => {
+  await openApp(page, []);
+  await expect(page.locator(".sidebar").getByRole("link", { name: "Reportes", exact: true })).toHaveCount(0);
+  await page.goto("/reports");
+  await expect(page.getByRole("alert")).toHaveText("No tienes permiso para acceder a Reportes.");
 });
 
 for (const { permissions, group, link } of [
@@ -90,7 +97,7 @@ for (const { permissions, group, link } of [
     await openApp(page, permissions);
     const sidebar = page.locator(".sidebar");
     await expect(sidebar.locator(".sidebar-nav-group-title > span:first-child")).toHaveText(["Inicio", group]);
-    await expect(sidebar.getByRole("link")).toHaveText(["Inicio", "Reportes", link]);
+    await expect(sidebar.getByRole("link")).toHaveText(["Inicio", link]);
   });
 }
 

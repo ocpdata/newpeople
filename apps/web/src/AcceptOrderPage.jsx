@@ -2139,6 +2139,10 @@ export default function AcceptOrderPage() {
   async function saveKickoffInvitation(statusCode) {
     const quotationId = Number(quotationToProcess?.id || 0);
     if (!quotationId) return;
+    if (invalidKickoffAttendees.length) {
+      setError("Retira los convocados internos no disponibles antes de guardar o enviar la convocatoria.");
+      return;
+    }
 
     const optionOne = String(
       kickoffInvitationDraft.meetingDateOptionOne || "",
@@ -2157,7 +2161,7 @@ export default function AcceptOrderPage() {
       quotation: quotationToProcess,
       draft: {
         ...kickoffInvitationDraft,
-        assignableUsers: processingUsers,
+        assignableUsers: kickoffInternalUsers,
       },
     });
 
@@ -2206,11 +2210,15 @@ export default function AcceptOrderPage() {
   }
 
   function openKickoffInvitationPreviewModal() {
+    if (invalidKickoffAttendees.length) {
+      setError("Retira los convocados internos no disponibles antes de preparar la convocatoria.");
+      return;
+    }
     const preparedEmail = buildKickoffInternalEmailPreview({
       quotation: quotationToProcess,
       draft: {
         ...kickoffInvitationDraft,
-        assignableUsers: processingUsers,
+        assignableUsers: kickoffInternalUsers,
       },
     });
     setKickoffInvitationDraft((current) => ({
@@ -4841,6 +4849,10 @@ export default function AcceptOrderPage() {
   const processingUsers = Array.isArray(processingData?.assignableUsers)
     ? processingData.assignableUsers
     : [];
+  const kickoffInternalUsers = processingData?.kickoffInternal?.assignableUsers || [];
+  const invalidKickoffAttendees = kickoffInvitationDraft.internalAttendeesUserIds.filter(
+    (id) => !kickoffInternalUsers.some((user) => Number(user.id) === Number(id)),
+  );
   const processingProviders = Array.isArray(processingData?.providers)
     ? processingData.providers
     : [];
@@ -6287,8 +6299,9 @@ export default function AcceptOrderPage() {
 
                 {activeProcessingStage.stageCode === "kickoff_internal" ? (
                   <>
-                    <section className="processing-stage-box">
+                    <section className="processing-stage-box kickoff-internal-invitation-card">
                       <header>
+                        <span className="kickoff-section-eyebrow">01 · Convocatoria</span>
                         <h5>Convocatoria Kick Off interno</h5>
                         <p>
                           Selecciona convocados internos y dos fechas
@@ -6297,10 +6310,16 @@ export default function AcceptOrderPage() {
                       </header>
 
                       <div className="processing-stage-grid two">
-                        <label className="field-group processing-stage-field kickoff-internal-users-field">
-                          <span>Convocados internos</span>
+                        <div className="field-group processing-stage-field kickoff-internal-users-field"
+                          role="group" aria-label="Convocados internos">
+                          <div className="kickoff-attendees-heading">
+                            <span>Convocados internos</span>
+                            <span className="kickoff-selection-count">
+                              Seleccionados: {kickoffInvitationDraft.internalAttendeesUserIds.length}
+                            </span>
+                          </div>
                           <div className="kickoff-internal-users-picker">
-                            {processingUsers.map((user) => {
+                            {kickoffInternalUsers.map((user) => {
                               const isSelected =
                                 kickoffInvitationDraft.internalAttendeesUserIds.includes(
                                   Number(user.id),
@@ -6308,7 +6327,7 @@ export default function AcceptOrderPage() {
                               return (
                                 <label
                                   key={user.id}
-                                  className="kickoff-internal-user-choice"
+                                  className={`kickoff-internal-user-choice${isSelected ? " is-selected" : ""}`}
                                 >
                                   <input
                                     type="checkbox"
@@ -6338,22 +6357,39 @@ export default function AcceptOrderPage() {
                                       });
                                     }}
                                   />
-                                  <span>
-                                    {user.fullName}{" "}
-                                    {user.email ? `(${user.email})` : ""}
+                                  <span className="kickoff-attendee-details">
+                                    <strong>{user.fullName}</strong>
+                                    {user.email && <small>{user.email}</small>}
                                   </span>
                                 </label>
                               );
                             })}
                           </div>
                           <span className="field-hint">
-                            Seleccionados:{" "}
-                            {
-                              kickoffInvitationDraft.internalAttendeesUserIds
-                                .length
-                            }
+                            Se muestran usuarios activos y, entre los vendedores, solo el asignado a esta cotización.
                           </span>
-                        </label>
+                          {invalidKickoffAttendees.length > 0 && (
+                            <div role="alert">
+                              <p className="field-hint opportunity-documents-preview-error">
+                                La convocatoria anterior contiene convocados no disponibles. Retíralos antes de guardar o enviar. El historial se conservará.
+                              </p>
+                              {invalidKickoffAttendees.map((id) => {
+                                const user = processingUsers.find((item) => Number(item.id) === Number(id));
+                                const name = user?.fullName || `Usuario #${id}`;
+                                return (
+                                  <button key={id} type="button" className="btn-secondary"
+                                    aria-label={`Retirar convocado no disponible: ${name}`}
+                                    onClick={() => setKickoffInvitationDraft((current) => ({
+                                      ...current,
+                                      internalAttendeesUserIds: current.internalAttendeesUserIds.filter((item) => Number(item) !== Number(id)),
+                                    }))}>
+                                    Retirar {name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
 
                         <label className="field-group processing-stage-field kickoff-internal-right-field">
                           <span>Opcion 1 (fecha y hora)</span>
@@ -6496,12 +6532,13 @@ export default function AcceptOrderPage() {
                       )}
                     </section>
 
-                    <section className="processing-stage-box">
+                    <section className="processing-stage-box kickoff-internal-minutes-card">
                       <header>
+                        <span className="kickoff-section-eyebrow">02 · Minuta y acuerdos</span>
                         <h5>Minuta</h5>
                         <p>
                           Carga archivo de texto o audio, genera resumen IA y
-                          culmina el step.
+                          completa esta etapa.
                         </p>
                       </header>
 

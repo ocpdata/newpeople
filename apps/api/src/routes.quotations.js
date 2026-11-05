@@ -6,6 +6,7 @@ import { buffer as streamToBuffer } from "node:stream/consumers";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
 import { lockQuotationClosure } from "./quotation-closure-lock.js";
+import { listKickoffInternalAttendees, validateKickoffInternalAttendees } from "./kickoff-internal-attendees.js";
 import { purchaseOrderValueSchema } from "./purchase-order-value.js";
 import { ensureQuotationWonDocumentsSchema } from "./quotation-won-documents-schema.js";
 import { QUOTATION_READ_PERMISSIONS as quotationPermissionCodes } from "../../../shared/quotation-permissions.js";
@@ -13,6 +14,7 @@ import {
   DEFAULT_QUOTATION_VAT_PCT,
   buildQuotationVersionBaseSaleTotalJoin,
   buildQuotationVersionEffectiveTotalSql,
+  buildQuotationVersionNetSaleSql,
 } from "./quotation-totals-sql.js";
 import { getUserAuthContext, requireAnyPermission } from "./auth.js";
 import { logAuditEvent } from "./audit.js";
@@ -1445,21 +1447,8 @@ function buildQuotationVersionContributionSql({
   versionAlias = "lv",
   totalsAlias = "latest_total",
 } = {}) {
-  const baseSaleSql = `COALESCE(${totalsAlias}.base_sale_total, 0)`;
   const baseCostSql = `COALESCE(${totalsAlias}.base_cost_total, 0)`;
-  const adjustedSaleSql = `CASE
-      WHEN ${versionAlias}.summary_distribution_mode = 'per_item'
-        THEN ${baseSaleSql}
-      WHEN ${versionAlias}.summary_discount_mode = 'amount'
-        THEN GREATEST(
-          ${baseSaleSql} - LEAST(COALESCE(${versionAlias}.summary_discount_value, 0), ${baseSaleSql}),
-          0
-        )
-      WHEN ${versionAlias}.summary_discount_mode = 'percentage'
-        THEN ${baseSaleSql} *
-          (1 - (LEAST(GREATEST(COALESCE(${versionAlias}.summary_discount_value, 0), 0), 100) / 100))
-      ELSE ${baseSaleSql}
-    END`;
+  const adjustedSaleSql = buildQuotationVersionNetSaleSql({ versionAlias, totalsAlias });
 
   return `CASE
       WHEN ${versionAlias}.id IS NULL THEN NULL
@@ -13241,6 +13230,7 @@ router.get(
         processingProducts,
         providerPurchaseOrders,
         receptionEvidences,
+        kickoffInternalAttendees,
       ] = await Promise.all([
         listQuotationProcessingStages({ quotation, latestVersion }),
         listProcessingAssignableUsers(),
@@ -13274,6 +13264,7 @@ router.get(
           quotationId,
           stageCode: "products_reception",
         }),
+        listKickoffInternalAttendees({ quotationId }),
       ]);
 
       const stagesWithPurchaseOrders = (
@@ -13311,6 +13302,7 @@ router.get(
         assignableUsers,
         providers,
         kickoffInternal: {
+          assignableUsers: kickoffInternalAttendees,
           latestInvitation: kickoffInvitations[0] || null,
           invitations: kickoffInvitations,
           evidences: kickoffInternalEvidences,
@@ -13457,6 +13449,9 @@ router.patch(
 
     try {
       await ensureQuotationProcessingSchema();
+      if (stageCode === "kickoff_internal" && Array.isArray(parsed.data.stageData?.internalAttendeesUserIds)) {
+        await validateKickoffInternalAttendees({ quotationId, userIds: parsed.data.stageData.internalAttendeesUserIds });
+      }
       const updateStage = (connection = null) => upsertQuotationProcessingStage({
         quotation,
         latestVersion,
@@ -13762,6 +13757,8 @@ router.post(
     const externalAttendeesEmails = extractDistinctList(
       payload.externalAttendeesEmails || [],
     );
+
+    await validateKickoffInternalAttendees({ quotationId, userIds: internalAttendeesUserIds });
 
     if (payload.statusCode === "sent") {
       if (!internalAttendeesUserIds.length && !externalAttendeesEmails.length) {

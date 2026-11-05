@@ -15607,13 +15607,25 @@ td {
 }
 
 .permission-module-header {
+  display: grid;
+  gap: 6px;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #5a7aa8;
   background: #f4f7fc;
-  padding: 6px 12px;
+  padding: 10px 12px;
+}
+
+.permission-module-description {
+  font-size: 13px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: 1.5;
+  color: #52657c;
+  overflow-wrap: anywhere;
 }
 
 .permission-module-group .checkbox-grid {
@@ -17012,10 +17024,152 @@ td {
   min-width: 0;
 }
 
+.kickoff-internal-invitation-card,
+.kickoff-internal-minutes-card {
+  padding: 20px;
+  gap: 18px;
+  min-width: 0;
+}
+
+.kickoff-section-eyebrow {
+  color: #42678e;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.kickoff-internal-invitation-card h5,
+.kickoff-internal-minutes-card h5 {
+  font-size: 17px;
+}
+
+.kickoff-internal-invitation-card > header p,
+.kickoff-internal-minutes-card > header p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.kickoff-internal-invitation-card .processing-stage-grid {
+  gap: 16px 24px;
+  align-content: start;
+}
+
+.kickoff-internal-invitation-card .kickoff-internal-users-field {
+  grid-row: 1 / span 3;
+}
+
+.kickoff-attendees-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.kickoff-selection-count {
+  border-radius: 20px;
+  background: #e8f0fa;
+  padding: 4px 9px;
+  color: #285784;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.kickoff-internal-invitation-card .kickoff-internal-users-picker {
+  width: 100%;
+  box-sizing: border-box;
+  max-height: 300px;
+  padding: 6px;
+  gap: 4px;
+  background: #f7f9fc;
+}
+
+.kickoff-internal-invitation-card .kickoff-internal-user-choice {
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  align-items: center;
+  line-height: 1.4;
+  transition: background-color 120ms, border-color 120ms;
+}
+
+.kickoff-internal-invitation-card .kickoff-internal-user-choice:hover {
+  background: #edf3fa;
+}
+
+.kickoff-internal-invitation-card .kickoff-internal-user-choice.is-selected {
+  background: #e8f1ff;
+  border-color: #b7d0f1;
+}
+
+.kickoff-internal-user-choice:focus-within {
+  outline: 2px solid #3475ce;
+  outline-offset: -2px;
+}
+
+.kickoff-attendee-details {
+  display: grid;
+  gap: 2px;
+}
+
+.kickoff-attendee-details strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kickoff-attendee-details small {
+  font-size: 12px;
+  font-weight: 400;
+  color: #526b87;
+}
+
+.kickoff-internal-invitation-card .processing-stage-actions,
+.kickoff-internal-minutes-card .processing-stage-actions {
+  align-items: center;
+  padding-top: 14px;
+  border-top: 1px solid #e2eaf4;
+}
+
+.kickoff-internal-minutes-card .field-group input[type="file"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 64px;
+  padding: 12px;
+  line-height: 20px;
+  background: #f7f9fc;
+  border-style: dashed;
+}
+
+.kickoff-internal-minutes-card input[type="file"]::file-selector-button {
+  margin-right: 12px;
+  border: 1px solid #cbd9e9;
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: #fff;
+  color: #24466b;
+  cursor: pointer;
+}
+
 @media (max-width: 880px) {
+  .kickoff-internal-invitation-card .processing-stage-grid.two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kickoff-internal-invitation-card,
+  .kickoff-internal-minutes-card {
+    padding: 14px;
+  }
+
   .kickoff-internal-users-field,
   .kickoff-internal-right-field {
     grid-column: 1;
+    grid-row: auto;
+  }
+
+  .kickoff-internal-invitation-card .kickoff-internal-users-field {
     grid-row: auto;
   }
 

@@ -31,7 +31,7 @@ const payload = {
   items: [opportunity],
 };
 
-async function openReport(page, { permissions = ["oportunidades.read", "cotizaciones.operacion"], fail = false, reportPayload = payload } = {}) {
+async function openReport(page, { permissions = ["reportes.oportunidades_cotizaciones.read_all"], fail = false, reportPayload = payload } = {}) {
   const requests = [];
   await page.addInitScript(() => window.localStorage.setItem("crm_token", "report-test"));
   await page.route("**/api/**", async (route) => {
@@ -251,10 +251,21 @@ test("expone errores y permite reintentar el reporte", async ({ page }) => {
   await expect(page.getByText("#3 Proyecto comercial", { exact: true })).toBeVisible();
 });
 
-test("no consulta datos ni ofrece la tarjeta sin acceso a ambos módulos", async ({ page }) => {
+test("los permisos de los modulos originales no conceden acceso al reporte", async ({ page }) => {
   const requests = await openReport(page, { permissions: ["oportunidades.read_all"] });
   await expect(page.getByRole("link", { name: /Oportunidades y cotizaciones/ })).toHaveCount(0);
   await page.goto("/reports/opportunities-quotations");
   await expect(page.getByRole("alert")).toContainText("Acceso insuficiente");
   expect(requests).toHaveLength(0);
+});
+
+test("el permiso propio permite consultar el reporte sin permisos de origen ni filtro de otros vendedores", async ({ page }) => {
+  await openReport(page, { permissions: ["reportes.oportunidades_cotizaciones.read"] });
+  await expect(page.getByRole("link", { name: /Rentabilidad de oportunidades ganadas/ })).toHaveCount(0);
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  await expect(page.getByText("Alcance: Mis datos (vendedor asignado actual)")).toBeVisible();
+  await expect(page.getByLabel("Vendedor", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("#3 Proyecto comercial", { exact: true })).toBeVisible();
+  await page.goto("/reports/opportunity-profitability");
+  await expect(page.getByRole("alert")).toContainText("Acceso insuficiente");
 });
