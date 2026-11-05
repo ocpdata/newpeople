@@ -2,6 +2,14 @@ import { query, withTransaction } from "./db.js";
 
 const CORE_PERMISSIONS = [
   {
+    code: "informacion_financiera.read", module: "informacion_financiera", action: "read",
+    description: "Consultar informacion financiera mensual de la empresa. Incluye acceso al modulo, sin permisos de otros modulos.",
+  },
+  {
+    code: "informacion_financiera.update", module: "informacion_financiera", action: "update",
+    description: "Capturar y modificar informacion financiera de cualquier mes, con auditoria. Incluye consulta. No hay cierres ni reaperturas de periodos.",
+  },
+  {
     code: "aceptar_pedido.procesamiento.modificar_aceptacion", module: "aceptar_pedido", action: "procesamiento_modificar_aceptacion",
     description: "Corregir documentos de cierre, valores y monedas de ordenes, fecha y notas de una cotizacion ya aceptada, con motivo y auditoria. Requiere actualizacion de procesamiento y acceso a la cotizacion. No modifica su contenido comercial ni permite reenviar correo al vendedor.",
   },

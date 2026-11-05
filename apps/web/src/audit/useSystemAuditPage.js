@@ -22,6 +22,7 @@ const AUDIT_ACTION_LABELS = {
 };
 
 const AUDIT_ENTITY_LABELS = {
+  monthly_financials: "Información financiera mensual",
   user: "Usuario",
   role: "Rol",
   account: "Cuenta",
@@ -126,6 +127,7 @@ export function formatAuditModuleLabel(value) {
     return "Oportunidades";
   }
   const moduleLabels = {
+    informacion_financiera: "Información financiera mensual",
     biblioteca_comercial: "Biblioteca comercial",
     chatbot: "Chatbot",
     contactos: "Contactos",
@@ -173,6 +175,7 @@ const DEFAULT_FILTERS = {
 
 const AUDIT_MODULE_OPTIONS = [
   { value: "", label: "Todos los módulos" },
+  { value: "informacion_financiera", label: "Información financiera mensual" },
   { value: "auth", label: "Auth" },
   { value: "usuarios", label: "Usuarios" },
   { value: "roles", label: "Roles" },
@@ -226,6 +229,7 @@ const AUDIT_ACTION_OPTIONS = [
 
 const AUDIT_ENTITY_OPTIONS = [
   { value: "", label: "Todas las entidades" },
+  { value: "monthly_financials", label: "Información financiera mensual" },
   { value: "user", label: "Usuario" },
   { value: "role", label: "Rol" },
   { value: "account", label: "Cuenta" },

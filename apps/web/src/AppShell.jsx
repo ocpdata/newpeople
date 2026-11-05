@@ -53,6 +53,7 @@ const ManufacturerRegistrationsPage = lazy(
 const ContactsPage = lazy(() => import("./ContactsPage"));
 const OpportunitiesQuotationsReportPage = lazy(() => import("./OpportunitiesQuotationsReportPage"));
 const OpportunityProfitabilityReportPage = lazy(() => import("./OpportunityProfitabilityReportPage"));
+const MonthlyFinancialsPage = lazy(() => import("./MonthlyFinancialsPage"));
 const ContactMappingPage = lazy(() => import("./ContactMappingPage"));
 const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
@@ -275,6 +276,8 @@ export default function AppShell({
   const canReadOpportunitiesQuotationsReport =
     getReportScope(can, "opportunitiesQuotations") !== null;
   const canReadProfitabilityReport = getReportScope(can, "profitability") !== null;
+  const canUpdateMonthlyFinancials = can("informacion_financiera.update");
+  const canReadMonthlyFinancials = can("informacion_financiera.read") || canUpdateMonthlyFinancials;
   const canReadContributionReport = getReportScope(can, "contribution") !== null;
   const canAccessReportsModule = canAccessReports(can);
   const canAccessCommercialDevelopment =
@@ -750,6 +753,7 @@ export default function AppShell({
             canAccessAcceptOrder ? <InvoicingPage /> : <Navigate to="/" />
           }
         />
+        <Route path="/monthly-financials" element={<MonthlyFinancialsPage canRead={canReadMonthlyFinancials} canUpdate={canUpdateMonthlyFinancials} />} />
         <Route
           path="/provider-invoice-reception"
           element={
@@ -993,8 +997,11 @@ export default function AppShell({
               </SidebarNavGroup>
             )}
 
-            {(canAccessAcceptOrder || can("proveedores.read")) && (
+            {(canAccessAcceptOrder || can("proveedores.read") || canReadMonthlyFinancials) && (
               <SidebarNavGroup title="Operaciones" userId={currentUser.id} key={`operaciones:${location.pathname}`}>
+                {canReadMonthlyFinancials && (
+                  <GuardedNavLink to="/monthly-financials" onBeforeNavigate={confirmRouteChange}>Información financiera mensual</GuardedNavLink>
+                )}
                 {canAccessAcceptOrder && (
                 <GuardedNavLink
                   to="/accept-order"

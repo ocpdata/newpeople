@@ -90,6 +90,8 @@ test("oculta Reportes sin permisos y protege su ruta directa", async ({ page }) 
 for (const { permissions, group, link } of [
   { permissions: ["propuestas.read"], group: "Ventas", link: "Propuestas" },
   { permissions: ["proveedores.read"], group: "Operaciones", link: "Proveedores" },
+  { permissions: ["informacion_financiera.read"], group: "Operaciones", link: "Información financiera mensual" },
+  { permissions: ["informacion_financiera.update"], group: "Operaciones", link: "Información financiera mensual" },
   { permissions: ["audit.read"], group: "Administración", link: "Auditoría" },
   { permissions: ["pruebas.read"], group: "Administración", link: "Pruebas de seguridad" },
 ]) {

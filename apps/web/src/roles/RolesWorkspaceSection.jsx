@@ -1,4 +1,5 @@
 function formatPermissionModuleName(moduleName) {
+  if (moduleName === "informacion_financiera") return "Información financiera mensual";
   if (moduleName === "mi_coach") {
     return "Coach";
   }
@@ -72,6 +73,7 @@ function formatPermissionModuleName(moduleName) {
 }
 
 const PERMISSION_MODULE_DESCRIPTIONS = {
+  informacion_financiera: "Captura mensual compartida de la empresa: descuentos, devoluciones, compras, gastos y porcentajes de ISR y PTU. Sin cierres de periodos; los cambios se auditan.",
   reportes:
     "Habilita cada reporte de forma independiente, sin permisos de los modulos de origen. Datos propios corresponde al vendedor asignado actual de la oportunidad; todos los usuarios permite consulta global. Cada permiso de reporte incluye acceso al modulo y a todas sus columnas y detalles.",
   roles:
@@ -130,6 +132,8 @@ const PERMISSION_MODULE_DESCRIPTIONS = {
     "Organiza documentos internos por temas para que la IA los consulte como fuente de conocimiento. La biblioteca permite revisar los temas y documentos, mientras que los permisos de administración controlan su importación, carga, actualización, clasificación y eliminación. El acceso a esta pantalla no es requisito para consultar documentos activos desde el chatbot.",
 };
 const ROLE_PERMISSION_LABELS = {
+  "informacion_financiera.read": { label: "Consultar información financiera mensual" },
+  "informacion_financiera.update": { label: "Capturar y modificar información financiera mensual" },
   "aceptar_pedido.procesamiento.modificar_aceptacion": { label: "Modificar datos de aceptacion", description: "Corregir documentos de cierre, valores y monedas de ordenes, fecha y notas con motivo y auditoria. Requiere actualizacion de procesamiento y acceso a la cotizacion. Mantiene el estado Aceptada y no permite reenviar correo al vendedor." },
   "reportes.contribucion.read": { label: "Contribucion: datos propios" },
   "reportes.contribucion.read_all": { label: "Contribucion: todos los usuarios" },
