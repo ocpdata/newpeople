@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 function formatPermissionModuleName(moduleName) {
   if (moduleName === "informacion_financiera") return "Información financiera mensual";
   if (moduleName === "mi_coach") {
@@ -668,6 +670,9 @@ const SHARED_COACH_PERMISSION_CODES = new Set([
   "mi_coach.execute",
   "mi_coach.admin",
   "mi_coach.chat_diagnostics",
+  "mi_coach.evaluations_read",
+  "mi_coach.evaluations_execute",
+  "mi_coach.evaluations_write",
   "fuentes_externas.execute",
 ]);
 const QUOTATION_PERMISSION_LABELS = {
@@ -724,9 +729,9 @@ const SHARED_COACH_PERMISSION_LABELS = {
     description: "Ver el resumen y abrir la pestaña Coach.",
   },
   "mi_coach.execute": {
-    label: "Confirmar propuestas del Coach",
+    label: "Aplicar acciones propuestas por Mi Coach",
     description:
-      "También necesitas permiso para cambiar el registro involucrado.",
+      "Confirma y aplica en el sistema las acciones sugeridas por Mi Coach. También necesitas permiso para modificar el registro involucrado.",
   },
   "mi_coach.admin": {
     label: "Administrar Mi Coach",
@@ -736,6 +741,21 @@ const SHARED_COACH_PERMISSION_LABELS = {
     label: "Revisar conversaciones para soporte",
     description:
       "Permite ver conversaciones de otros usuarios. Solo para soporte autorizado.",
+  },
+  "mi_coach.evaluations_read": {
+    label: "Consultar calidad de Coach y Cuenta nueva",
+    description:
+      "Ver las pruebas del chat y los reportes de calidad de ambos módulos.",
+  },
+  "mi_coach.evaluations_execute": {
+    label: "Ejecutar pruebas de calidad",
+    description:
+      "Ejecutar pruebas del chat y actualizar el monitoreo de Coach y Cuenta nueva.",
+  },
+  "mi_coach.evaluations_write": {
+    label: "Crear casos de prueba desde feedback",
+    description:
+      "Convertir feedback de conversaciones de clientes en casos de prueba. También requiere permiso de soporte.",
   },
   "fuentes_externas.execute": {
     label: "Consultar fuentes públicas",
@@ -796,6 +816,16 @@ export default function RolesWorkspaceSection({
   roleUsers,
   selectRole,
 }) {
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set());
+  const isCollapsed = (key) => !expandedGroups.has(key);
+  const toggleCollapsed = (key) => {
+    setExpandedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
   const coachModules = new Set([
     "mi_coach",
     "inteligencia_comercial",
@@ -850,59 +880,109 @@ export default function RolesWorkspaceSection({
     [moduleName, modulePermissions],
     isSubgroup = false,
     label = "",
-  ) => (
-    <div
-      key={`${moduleName}-${label || "module"}`}
-      className={`permission-module-group${isSubgroup ? " permission-module-subgroup" : ""}`}
-    >
-      <div className="permission-module-header">
-        <span>{label || formatPermissionModuleName(moduleName)}</span>
-        {PERMISSION_MODULE_DESCRIPTIONS[moduleName] ? (
-          <span className="permission-module-description">
-            {PERMISSION_MODULE_DESCRIPTIONS[moduleName]}
-          </span>
-        ) : null}
-      </div>
-      <div className="checkbox-grid">
-        {modulePermissions.map((permission) => (
-          <label key={permission.id}>
-            <input
-              type="checkbox"
-              checked={selectedPerms.includes(Number(permission.id))}
-              onChange={(event) =>
-                togglePermission(permission.id, event.target.checked)
-              }
-            />
-            <span className="permission-label">
-              <span className="permission-code">
-                {SHARED_COACH_PERMISSION_LABELS[permission.code]?.label ||
-                  ROLE_PERMISSION_LABELS[permission.code]?.label ||
-                  USER_PERMISSION_LABELS[permission.code]?.label ||
-                  COMMERCIAL_TRACKING_PERMISSION_LABELS[permission.code]?.label ||
-                QUOTATION_PERMISSION_LABELS[permission.code]?.label ||
-                  permission.action}
-              </span>
-              {(SHARED_COACH_PERMISSION_LABELS[permission.code]?.description ||
-                ROLE_PERMISSION_LABELS[permission.code]?.description ||
-                USER_PERMISSION_LABELS[permission.code]?.description ||
-                COMMERCIAL_TRACKING_PERMISSION_LABELS[permission.code]?.description ||
-                QUOTATION_PERMISSION_LABELS[permission.code]?.description ||
-                permission.description) && (
-                <span className="permission-description">
-                  {SHARED_COACH_PERMISSION_LABELS[permission.code]?.description ||
-                    ROLE_PERMISSION_LABELS[permission.code]?.description ||
-                    USER_PERMISSION_LABELS[permission.code]?.description ||
-                    COMMERCIAL_TRACKING_PERMISSION_LABELS[permission.code]?.description ||
-                    QUOTATION_PERMISSION_LABELS[permission.code]?.description ||
-                    permission.description}
-                </span>
-              )}
+  ) => {
+    const groupKey = `module-${moduleName}-${label || "module"}`;
+    const collapsed = isCollapsed(groupKey);
+    const contentId = `permissions-${groupKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    return (
+      <div
+        key={`${moduleName}-${label || "module"}`}
+        className={`permission-module-group${isSubgroup ? " permission-module-subgroup" : ""}`}
+      >
+        <div className="permission-module-header">
+          <button
+            type="button"
+            className="permission-collapse-button"
+            aria-expanded={!collapsed}
+            aria-controls={contentId}
+            onClick={() => toggleCollapsed(groupKey)}
+          >
+            <span>{label || formatPermissionModuleName(moduleName)}</span>
+            <svg
+              className="permission-collapse-icon"
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+            >
+              <path d="m3 6 5 5 5-5" />
+            </svg>
+          </button>
+          {PERMISSION_MODULE_DESCRIPTIONS[moduleName] ? (
+            <span className="permission-module-description">
+              {PERMISSION_MODULE_DESCRIPTIONS[moduleName]}
             </span>
-          </label>
-        ))}
+          ) : null}
+        </div>
+        <div id={contentId} className="checkbox-grid" hidden={collapsed}>
+          {modulePermissions.map((permission) => (
+            <label key={permission.id}>
+              <input
+                type="checkbox"
+                checked={selectedPerms.includes(Number(permission.id))}
+                onChange={(event) =>
+                  togglePermission(permission.id, event.target.checked)
+                }
+              />
+              <span className="permission-label">
+                <span className="permission-code">
+                  {SHARED_COACH_PERMISSION_LABELS[permission.code]?.label ||
+                    ROLE_PERMISSION_LABELS[permission.code]?.label ||
+                    USER_PERMISSION_LABELS[permission.code]?.label ||
+                    COMMERCIAL_TRACKING_PERMISSION_LABELS[permission.code]?.label ||
+                    QUOTATION_PERMISSION_LABELS[permission.code]?.label ||
+                    permission.action}
+                </span>
+                {(SHARED_COACH_PERMISSION_LABELS[permission.code]?.description ||
+                  ROLE_PERMISSION_LABELS[permission.code]?.description ||
+                  USER_PERMISSION_LABELS[permission.code]?.description ||
+                  COMMERCIAL_TRACKING_PERMISSION_LABELS[permission.code]?.description ||
+                  QUOTATION_PERMISSION_LABELS[permission.code]?.description ||
+                  permission.description) && (
+                  <span className="permission-description">
+                    {SHARED_COACH_PERMISSION_LABELS[permission.code]?.description ||
+                      ROLE_PERMISSION_LABELS[permission.code]?.description ||
+                      USER_PERMISSION_LABELS[permission.code]?.description ||
+                      COMMERCIAL_TRACKING_PERMISSION_LABELS[permission.code]?.description ||
+                      QUOTATION_PERMISSION_LABELS[permission.code]?.description ||
+                      permission.description}
+                  </span>
+                )}
+              </span>
+            </label>
+          ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+  const renderPermissionFamily = (key, title, description, children) => {
+    const collapsed = isCollapsed(key);
+    const contentId = `permissions-family-${key}`;
+    return (
+      <section key={key} className="permission-family-group">
+        <div className="permission-family-header">
+          <button
+            type="button"
+            className="permission-collapse-button"
+            aria-expanded={!collapsed}
+            aria-controls={contentId}
+            onClick={() => toggleCollapsed(key)}
+          >
+            <span>{title}</span>
+            <svg
+              className="permission-collapse-icon"
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+            >
+              <path d="m3 6 5 5 5-5" />
+            </svg>
+          </button>
+          <span className="permission-family-description">{description}</span>
+        </div>
+        <div id={contentId} hidden={collapsed}>
+          {children}
+        </div>
+      </section>
+    );
+  };
 
   return (
     <>
@@ -1121,28 +1201,23 @@ export default function RolesWorkspaceSection({
           {selectedRoleId ? (
             <div className="permissions-by-module">
               {configurationGroups.length > 0 && (
-                <section className="permission-family-group">
-                  <div className="permission-family-header">
-                    <span>Configuración</span>
-                    <span className="permission-family-description">
-                      Ajustes generales y configuración de módulos especializados.
-                    </span>
-                  </div>
+                renderPermissionFamily(
+                  "configuration",
+                  "Configuración",
+                  "Ajustes generales y configuración de módulos especializados.",
                   <div className="permission-family-subgroups">
                     {configurationGroups.map(([group, isSubgroup, label]) =>
                       renderPermissionGroup(group, isSubgroup, label),
                     )}
-                  </div>
-                </section>
+                  </div>,
+                )
               )}
-              {coachPermissionGroups.length > 0 && (
-                <section className="permission-family-group">
-                  <div className="permission-family-header">
-                    <span>Mi Coach</span>
-                    <span className="permission-family-description">
-                      Acceso común, chats y capacidades compartidas
-                    </span>
-                  </div>
+              {(coachPermissionGroups.length > 0 ||
+                sharedCoachPermissions.length > 0) && (
+                renderPermissionFamily(
+                  "coach",
+                  "Mi Coach",
+                  "Acceso común, chats y capacidades compartidas",
                   <div className="permission-family-subgroups">
                     {sharedCoachPermissions.length > 0
                       ? renderPermissionGroup(
@@ -1154,18 +1229,14 @@ export default function RolesWorkspaceSection({
                     {coachPermissionGroups.map((group) =>
                       renderPermissionGroup(group, true),
                     )}
-                  </div>
-                </section>
+                  </div>,
+                )
               )}
               {accessManagementGroups.length > 0 && (
-                <section className="permission-family-group">
-                  <div className="permission-family-header">
-                    <span>Roles y permisos</span>
-                    <span className="permission-family-description">
-                      Administra perfiles de acceso y consulta el catálogo para
-                      definir qué puede hacer cada rol.
-                    </span>
-                  </div>
+                renderPermissionFamily(
+                  "access-management",
+                  "Roles y permisos",
+                  "Administra perfiles de acceso y consulta el catálogo para definir qué puede hacer cada rol.",
                   <div className="permission-family-subgroups">
                     {accessManagementGroups.map((group) =>
                       renderPermissionGroup(
@@ -1176,19 +1247,14 @@ export default function RolesWorkspaceSection({
                           : "Roles",
                       ),
                     )}
-                  </div>
-                </section>
+                  </div>,
+                )
               )}
               {opportunityGroups.length > 0 && (
-                <section className="permission-family-group">
-                  <div className="permission-family-header">
-                    <span>Oportunidades</span>
-                    <span className="permission-family-description">
-                      Gestiona las oportunidades y consulta o registra sus
-                      notas. Los permisos temporales de notas se identifican
-                      por separado.
-                    </span>
-                  </div>
+                renderPermissionFamily(
+                  "opportunities",
+                  "Oportunidades",
+                  "Gestiona las oportunidades y consulta o registra sus notas. Los permisos temporales de notas se identifican por separado.",
                   <div className="permission-family-subgroups">
                     {opportunityGroups.map((group) =>
                       renderPermissionGroup(
@@ -1199,8 +1265,8 @@ export default function RolesWorkspaceSection({
                           : "Gestión de oportunidades",
                       ),
                     )}
-                  </div>
-                </section>
+                  </div>,
+                )
               )}
               {otherPermissionGroups.map((group) =>
                 renderPermissionGroup(group),

@@ -157,19 +157,19 @@ const CORE_PERMISSIONS = [
     code: "mi_coach.evaluations_read",
     module: "mi_coach",
     action: "evaluations_read",
-    description: "Consultar catálogo y evaluaciones propias del chat",
+    description: "Consultar las pruebas y reportes de calidad del chat de Coach y Cuenta nueva",
   },
   {
     code: "mi_coach.evaluations_execute",
     module: "mi_coach",
     action: "evaluations_execute",
-    description: "Ejecutar evaluaciones del chat con IA real en esta instancia",
+    description: "Ejecutar pruebas del chat y actualizar el monitoreo de calidad de Coach y Cuenta nueva",
   },
   {
     code: "mi_coach.evaluations_write",
     module: "mi_coach",
     action: "evaluations_write",
-    description: "Confirmar acciones de evaluación sobre registros autorizados",
+    description: "Convertir feedback de conversaciones de clientes en casos de prueba. También requiere permiso de soporte",
   },
   {
     code: "fuentes_externas.execute",
@@ -307,6 +307,21 @@ const CORE_PERMISSIONS = [
 ];
 
 const PERMISSION_DESCRIPTION_OVERRIDES = [
+  {
+    code: "mi_coach.evaluations_read",
+    description:
+      "Consultar las pruebas y reportes de calidad del chat de Coach y Cuenta nueva",
+  },
+  {
+    code: "mi_coach.evaluations_execute",
+    description:
+      "Ejecutar pruebas del chat y actualizar el monitoreo de calidad de Coach y Cuenta nueva",
+  },
+  {
+    code: "mi_coach.evaluations_write",
+    description:
+      "Convertir feedback de conversaciones de clientes en casos de prueba. También requiere permiso de soporte",
+  },
   {
     code: "audit.read",
     description:

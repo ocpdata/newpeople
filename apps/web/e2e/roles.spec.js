@@ -800,6 +800,10 @@ const permissions = [
   { id: 116, code: "reportes.oportunidades_cotizaciones.read_all", module: "reportes", action: "oportunidades_cotizaciones.read_all", description: "Consultar todos los usuarios sin permisos de origen" },
   { id: 117, code: "reportes.rentabilidad.read", module: "reportes", action: "rentabilidad.read", description: "Consultar rentabilidad propia con costos y margen" },
   { id: 118, code: "reportes.rentabilidad.read_all", module: "reportes", action: "rentabilidad.read_all", description: "Consultar rentabilidad de todos los usuarios con costos y margen" },
+  { id: 119, code: "mi_coach.evaluations_read", module: "mi_coach", action: "evaluations_read", description: "Consultar las pruebas y reportes de calidad del chat de Coach y Cuenta nueva" },
+  { id: 120, code: "mi_coach.evaluations_execute", module: "mi_coach", action: "evaluations_execute", description: "Ejecutar pruebas del chat y actualizar el monitoreo de calidad de Coach y Cuenta nueva" },
+  { id: 121, code: "mi_coach.evaluations_write", module: "mi_coach", action: "evaluations_write", description: "Convertir feedback de conversaciones de clientes en casos de prueba. También requiere permiso de soporte" },
+  { id: 122, code: "mi_coach.execute", module: "mi_coach", action: "execute", description: "Confirmar operaciones propuestas por Mi Coach" },
 ];
 
 for (const width of [1280, 900]) {
@@ -844,6 +848,31 @@ for (const width of [1280, 900]) {
     await page.getByRole("button", { name: /Equipo comercial/ }).click();
     const rows = page.locator(".permission-module-group .checkbox-grid > label");
     await expect(rows).toHaveCount(permissions.length);
+    const allPermissionGroupToggles = page.locator(
+      ".permission-family-header .permission-collapse-button, .permission-module-header .permission-collapse-button",
+    );
+    for (
+      let index = 0;
+      index < await allPermissionGroupToggles.count();
+      index += 1
+    ) {
+      await expect(allPermissionGroupToggles.nth(index)).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+    }
+    const familyToggles = page.locator(
+      ".permission-family-header .permission-collapse-button",
+    );
+    for (let index = 0; index < await familyToggles.count(); index += 1) {
+      await familyToggles.nth(index).evaluate((button) => button.click());
+    }
+    const moduleToggles = page.locator(
+      ".permission-module-header .permission-collapse-button",
+    );
+    for (let index = 0; index < await moduleToggles.count(); index += 1) {
+      await moduleToggles.nth(index).evaluate((button) => button.click());
+    }
     const reportsGroup = page.locator(".permission-module-group").filter({
       has: page.getByText("Reportes", { exact: true }),
     });
@@ -854,7 +883,9 @@ for (const width of [1280, 900]) {
       "Rentabilidad: datos propios",
       "Rentabilidad: todos los usuarios",
     ]);
-    const reportTitle = reportsGroup.locator(".permission-module-header > span").first();
+    const reportTitle = reportsGroup.locator(
+      ".permission-module-header > .permission-collapse-button > span",
+    );
     const reportDescription = reportsGroup.locator(".permission-module-description");
     const titleBox = await reportTitle.boundingBox();
     const descriptionBox = await reportDescription.boundingBox();
@@ -862,6 +893,58 @@ for (const width of [1280, 900]) {
     await expect(reportDescription).toHaveCSS("text-transform", "none");
     await expect(reportDescription).toHaveCSS("font-weight", "400");
     await reportsGroup.screenshot({ path: `test-results/reportes-permisos-${width}.png` });
+    const coachFamily = page.locator(".permission-family-group").filter({
+      has: page.locator(".permission-family-header > .permission-collapse-button > span").getByText(
+        "Mi Coach",
+        { exact: true },
+      ),
+    });
+    const coachFamilyTitle = coachFamily.locator(
+      ".permission-family-header > .permission-collapse-button",
+    );
+    const coachFamilyDescription = coachFamily.locator(
+      ".permission-family-description",
+    );
+    const coachTitleBox = await coachFamilyTitle.boundingBox();
+    const coachDescriptionBox = await coachFamilyDescription.boundingBox();
+    expect(coachDescriptionBox.y).toBeGreaterThanOrEqual(
+      coachTitleBox.y + coachTitleBox.height,
+    );
+    const commonCoachGroup = coachFamily.locator(".permission-module-group").filter({
+      has: page.getByText("Acceso y capacidades comunes", { exact: true }),
+    });
+    await expect(commonCoachGroup.locator(".permission-code")).toContainText([
+      "Consultar calidad de Coach y Cuenta nueva",
+      "Ejecutar pruebas de calidad",
+      "Crear casos de prueba desde feedback",
+      "Aplicar acciones propuestas por Mi Coach",
+    ]);
+    await expect(
+      commonCoachGroup.locator(".permission-description"),
+    ).toContainText([
+      "Ver las pruebas del chat y los reportes de calidad de ambos módulos.",
+      "Ejecutar pruebas del chat y actualizar el monitoreo de Coach y Cuenta nueva.",
+      "Convertir feedback de conversaciones de clientes en casos de prueba. También requiere permiso de soporte.",
+      "Confirma y aplica en el sistema las acciones sugeridas por Mi Coach. También necesitas permiso para modificar el registro involucrado.",
+    ]);
+    await expect(coachFamily.locator(".permission-module-group")).toHaveCount(1);
+    const coachFamilyToggle = coachFamily.getByRole("button", {
+      name: "Mi Coach",
+      exact: true,
+    });
+    await expect(coachFamilyToggle).toHaveAttribute("aria-expanded", "true");
+    await coachFamilyToggle.evaluate((button) => button.click());
+    await expect(coachFamilyToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(commonCoachGroup.locator(".checkbox-grid")).toBeHidden();
+    await coachFamilyToggle.evaluate((button) => button.click());
+    const commonCoachToggle = commonCoachGroup.getByRole("button", {
+      name: "Acceso y capacidades comunes",
+      exact: true,
+    });
+    await commonCoachToggle.evaluate((button) => button.click());
+    await expect(commonCoachToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(commonCoachGroup.locator(".checkbox-grid")).toBeHidden();
+    await commonCoachToggle.evaluate((button) => button.click());
     for (let index = 0; index < permissions.length; index += 1) {
       const row = rows.nth(index);
       await expect(row.getByRole("checkbox")).toBeChecked();
@@ -880,7 +963,7 @@ for (const width of [1280, 900]) {
       "Gestionar cotizaciones en logística",
     );
     const configurationFamily = page.locator(".permission-family-group").filter({
-      has: page.locator(".permission-family-header > span").getByText(
+      has: page.locator(".permission-family-header > .permission-collapse-button > span").getByText(
         "Configuración",
         { exact: true },
       ),
@@ -895,7 +978,7 @@ for (const width of [1280, 900]) {
     );
     await expect(
       configurationSubgroups.locator(
-        ".permission-module-header > span:first-child",
+        ".permission-module-header > .permission-collapse-button > span",
       ),
     ).toHaveText([
       "Configuración general",
@@ -923,7 +1006,7 @@ for (const width of [1280, 900]) {
       has: page.getByText("Embudo de ventas", { exact: true }),
     });
     await expect(
-      pipelineGroup.locator(".permission-module-header > span").first(),
+      pipelineGroup.locator(".permission-module-header > .permission-collapse-button > span"),
     ).toHaveText(
       "Embudo de ventas",
     );
@@ -963,7 +1046,7 @@ for (const width of [1280, 900]) {
       "Administra perfiles de acceso y consulta el catálogo para definir qué puede hacer cada rol.",
     );
     const rolesGroup = accessManagementGroup.locator(".permission-module-group").filter({
-    has: page.locator(".permission-module-header > span").getByText("Roles", { exact: true }),
+    has: page.locator(".permission-module-header > .permission-collapse-button > span").getByText("Roles", { exact: true }),
     });
     await expect(rolesGroup.locator(".permission-module-description")).toHaveText(
     "Define los perfiles de acceso: consulta roles y sus usuarios, crea roles personalizados y administra sus permisos. Asignar roles a usuarios requiere un permiso aparte.",
@@ -996,7 +1079,7 @@ for (const width of [1280, 900]) {
     has: page.getByText("Ritmo comercial", { exact: true }),
     });
     await expect(
-    rhythmGroup.locator(".permission-module-header > span").first(),
+    rhythmGroup.locator(".permission-module-header > .permission-collapse-button > span"),
     ).toHaveText("Ritmo comercial");
     await expect(rhythmGroup.locator(".permission-module-description")).toHaveText(
     "Da seguimiento al desempeño comercial con métricas de cuota, pipeline del trimestre, oportunidades, leads y conversiones. Cada vendedor consulta su propio resultado; el ranking, el detalle del equipo y la vista en pantalla requieren permisos adicionales.",
@@ -1015,7 +1098,7 @@ for (const width of [1280, 900]) {
     has: page.getByText("Registros con fabricantes", { exact: true }),
     });
     await expect(
-    manufacturerGroup.locator(".permission-module-header > span").first(),
+    manufacturerGroup.locator(".permission-module-header > .permission-collapse-button > span"),
     ).toHaveText("Registros con fabricantes");
     await expect(manufacturerGroup.locator(".permission-module-description")).toHaveText(
     "Da seguimiento a los registros de fabricante vinculados a oportunidades: consulta solicitudes, aprobaciones, vencimientos y renovaciones. El acceso a cada oportunidad también depende de los permisos comerciales asignados.",
@@ -1038,7 +1121,7 @@ for (const width of [1280, 900]) {
     has: page.getByText("Proveedores", { exact: true }),
     });
     await expect(
-    providersGroup.locator(".permission-module-header > span").first(),
+    providersGroup.locator(".permission-module-header > .permission-collapse-button > span"),
     ).toHaveText("Proveedores");
     await expect(providersGroup.locator(".permission-module-description")).toHaveText(
     "Administra el catálogo de proveedores: consulta sus datos y contactos, crea proveedores y actualiza su información o estado. Las listas de precios tienen permisos separados.",
@@ -1103,7 +1186,7 @@ for (const width of [1280, 900]) {
     has: page.getByText("Playbooks técnicos", { exact: true }),
     });
     await expect(
-    playbooksGroup.locator(".permission-module-header > span").first(),
+    playbooksGroup.locator(".permission-module-header > .permission-collapse-button > span"),
     ).toHaveText("Playbooks técnicos");
     await expect(playbooksGroup.locator(".permission-module-description")).toHaveText(
     "Centraliza por solución las preguntas técnicas, reglas de validación y dimensionamiento, estructura del alcance y plantillas de topología. El contenido se versiona y sirve como base para las propuestas; el preventa revisa y aprueba el resultado.",
@@ -1118,7 +1201,7 @@ for (const width of [1280, 900]) {
     has: page.getByText("Metas y comisiones", { exact: true }),
     });
     await expect(
-    commercialPlanningGroup.locator(".permission-module-header > span").first(),
+    commercialPlanningGroup.locator(".permission-module-header > .permission-collapse-button > span"),
     ).toHaveText("Metas y comisiones");
     await expect(commercialPlanningGroup.locator(".permission-module-description")).toHaveText(
     "Define las metas trimestrales por vendedor y las tasas de comisión, y permite consultar el seguimiento de ventas aceptadas y comisiones. La consulta, creación inicial, edición y revisión de cambios se controlan con permisos independientes.",
@@ -1454,7 +1537,7 @@ for (const width of [1280, 900]) {
     has: page.getByText("Pruebas de seguridad", { exact: true }),
     });
     await expect(
-    securityTestsGroup.locator(".permission-module-header > span").first(),
+    securityTestsGroup.locator(".permission-module-header > .permission-collapse-button > span"),
     ).toHaveText("Pruebas de seguridad");
     await expect(securityTestsGroup.locator(".permission-module-description")).toHaveText(
     "Permite revisar ejecuciones y reportes de pruebas controladas de seguridad, como validaciones del WAF, límites de solicitudes y defensas de API. Algunas pruebas avanzadas requieren permisos administrativos.",
