@@ -250,7 +250,7 @@ function createCommercialFlowFixture({
 async function mockCommercialFlowApi(
   page,
   fixture,
-  { canManageQuestions = false, canEditWonOpportunity = false } = {},
+  { canManageQuestions = false, canEditWonOpportunity = false, canChangeClosedStatus = false } = {},
 ) {
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -280,8 +280,15 @@ async function mockCommercialFlowApi(
           "oportunidades.read",
           ...(canManageQuestions ? ["oportunidades.update"] : []),
           ...(canEditWonOpportunity ? ["oportunidades.update_won"] : []),
+          ...(canChangeClosedStatus ? ["oportunidades.change_closed_status"] : []),
         ],
       });
+    }
+
+    if (pathname === "/api/opportunities/501/commercial-status" && method === "POST") {
+      const body = route.request().postDataJSON();
+      fixture.setCloseStatus(body.statusCode, body.reason);
+      return json({ message: body.statusCode === "en_proceso" ? "Oportunidad reabierta" : "Estado comercial actualizado" });
     }
 
     if (pathname === "/api/opportunities" && method === "GET") {
@@ -1255,6 +1262,104 @@ test.describe("contacts opportunities", () => {
     await expect(page.getByRole("button", { name: "Guardar cambios" })).toBeDisabled();
     await expect(page.getByText(/necesitas `oportunidades.update_won`/i)).toBeVisible();
     await expect(page.locator(".opportunity-main-data-section input").first()).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Cambiar estado comercial", exact: true })).toHaveCount(0);
+  });
+
+  for (const status of ["ganada", "perdida", "anulada"]) {
+    test(`reabre una oportunidad ${status} con permiso especifico sin update_won`, async ({ page }) => {
+      const fixture = createCommercialFlowFixture();
+      fixture.setCloseStatus(status, "Cierre anterior");
+      await bootstrapAuthenticatedSession(page);
+      await mockCommercialFlowApi(page, fixture, { canManageQuestions: true, canChangeClosedStatus: true });
+      await page.goto("http://127.0.0.1:4173/opportunities");
+      await openOpportunityEditor(page);
+      const previousStage = fixture.detail.sales_stage_id;
+      const previousUpdatedAt = fixture.detail.updated_at;
+      await page.getByRole("button", { name: "Cambiar estado comercial", exact: true }).click();
+      await page.getByLabel("Nuevo estado comercial", { exact: true }).selectOption("en_proceso");
+      const confirm = page.getByRole("button", { name: "Confirmar cambio de estado", exact: true });
+      await expect(confirm).toBeDisabled();
+      await page.getByLabel("Motivo del cambio de estado", { exact: true }).fill("El cliente retomó la compra");
+      const requestPromise = page.waitForRequest((req) => req.url().endsWith("/501/commercial-status") && req.method() === "POST");
+      await confirm.click();
+      expect((await requestPromise).postDataJSON()).toEqual({
+        statusCode: "en_proceso", reason: "El cliente retomó la compra",
+        expectedStatusCode: status, expectedUpdatedAt: previousUpdatedAt,
+      });
+      await expect(page.getByRole("button", { name: "Guardar cambios", exact: true })).toBeEnabled();
+      await expect(page.locator(".opportunity-main-data-section input").first()).toBeEnabled();
+      await expect(page.getByRole("button", { name: "Cambiar estado comercial", exact: true })).toHaveCount(0);
+      expect(fixture.detail.commercial_status).toBe("En proceso");
+      expect(fixture.detail.sales_stage_id).toBe(previousStage);
+      expect(fixture.detail.activation_status_id).toBe(1);
+      await page.getByRole("button", { name: "Cerrar modal de edición de oportunidad" }).click();
+      await expect(page.locator("tbody tr").filter({ hasText: "Expansion 2026" }).first()).toContainText("En proceso");
+    });
+  }
+
+  test("corrige el cierre desde Waiting sin desbloquear las etapas de una cerrada", async ({ page }) => {
+    const fixture = createCommercialFlowFixture();
+    fixture.detail.sales_stage_id = 7;
+    fixture.setCloseStatus("anulada", "Cierre equivocado");
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, fixture, { canManageQuestions: true, canChangeClosedStatus: true });
+    await page.goto("http://127.0.0.1:4173/opportunities");
+    await openOpportunityEditor(page);
+    await page.getByRole("button", { name: "Cambiar estado comercial", exact: true }).click();
+    await page.getByLabel("Nuevo estado comercial", { exact: true }).selectOption("ganada");
+    await page.getByLabel("Motivo del cambio de estado", { exact: true }).fill("Venta confirmada");
+    await page.getByRole("button", { name: "Confirmar cambio de estado", exact: true }).click();
+    await expect(page.getByText("Esta oportunidad está ganada.", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Guardar cambios", exact: true })).toBeDisabled();
+    expect(fixture.detail.commercial_status).toBe("Ganada");
+    expect(fixture.detail.sales_stage_id).toBe(7);
+  });
+
+  test("protege cambios pendientes y permite cancelar el cambio de estado", async ({ page }) => {
+    const fixture = createCommercialFlowFixture();
+    fixture.setCloseStatus("perdida");
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, fixture, { canManageQuestions: true, canChangeClosedStatus: true });
+    await page.goto("http://127.0.0.1:4173/opportunities");
+    await openOpportunityEditor(page);
+    const name = page.locator(".opportunity-main-data-section input").first();
+    const change = page.getByRole("button", { name: "Cambiar estado comercial", exact: true });
+    const statusSection = page.getByRole("region", { name: "Cambiar estado comercial", exact: true });
+    await expect(change).toHaveCSS("font-size", "12px");
+    await page.setViewportSize({ width: 420, height: 900 });
+    await expect(change).toBeInViewport();
+    expect(await statusSection.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await name.fill("Nombre pendiente");
+    await expect(change).toBeDisabled();
+    await expect(page.getByText("Guarda o descarta los cambios pendientes antes de cambiar el estado comercial.")).toBeVisible();
+    await name.fill(fixture.detail.name);
+    await expect(change).toBeEnabled();
+    await change.click();
+    expect(await statusSection.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await expect(page.locator("#opportunity-new-commercial-status option[value=ganada]")).toBeDisabled();
+    await page.getByRole("button", { name: "Cancelar cambio de estado", exact: true }).click();
+    await expect(name).toBeEnabled();
+    expect(fixture.detail.commercial_status).toBe("Perdida");
+  });
+
+  test("muestra conflicto de estado sin perder el motivo ni anunciar exito", async ({ page }) => {
+    const fixture = createCommercialFlowFixture();
+    fixture.setCloseStatus("perdida");
+    await bootstrapAuthenticatedSession(page);
+    await mockCommercialFlowApi(page, fixture, { canManageQuestions: true, canChangeClosedStatus: true });
+    await page.route("**/api/opportunities/501/commercial-status", (route) => route.fulfill({
+      status: 409, contentType: "application/json",
+      body: JSON.stringify({ message: "La oportunidad cambió. Cierra y vuelve a abrir la oportunidad." }),
+    }));
+    await page.goto("http://127.0.0.1:4173/opportunities");
+    await openOpportunityEditor(page);
+    await page.getByRole("button", { name: "Cambiar estado comercial", exact: true }).click();
+    await page.getByLabel("Nuevo estado comercial", { exact: true }).selectOption("en_proceso");
+    await page.getByLabel("Motivo del cambio de estado", { exact: true }).fill("Retomó el contacto");
+    await page.getByRole("button", { name: "Confirmar cambio de estado", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("La oportunidad cambió");
+    await expect(page.getByLabel("Motivo del cambio de estado", { exact: true })).toHaveValue("Retomó el contacto");
+    expect(fixture.detail.commercial_status).toBe("Perdida");
   });
 
   test("update_won habilita editar una oportunidad ganada", async ({ page }) => {

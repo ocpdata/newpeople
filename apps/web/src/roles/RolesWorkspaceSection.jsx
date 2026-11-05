@@ -457,6 +457,11 @@ const ROLE_PERMISSION_LABELS = {
     description:
       "Editar campos de oportunidades ganadas junto con oportunidades.update. No las reabre ni permite cambiar su etapa o estado comercial; solo aplica a oportunidades accesibles.",
   },
+  "oportunidades.change_closed_status": {
+    label: "Cambiar estado de oportunidades cerradas",
+    description:
+      "Corregir el cierre o reabrir oportunidades accesibles con motivo y auditoría. Requiere oportunidades.update. No concede edición general de Ganadas ni cambios de etapa.",
+  },
   "oportunidades.bypass_stage_validation": {
     label: "Omitir validación al avanzar de etapa",
     description:

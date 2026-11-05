@@ -21282,6 +21282,157 @@ describe("API integration baseline", () => {
     );
   });
 
+  test("oportunidades.commercial-status corrige cierres, reabre y conserva el flujo con auditoria", async () => {
+    const roleId = await createRole({
+      name: `${TEST_PREFIX}_closed_status_editor`,
+      permissionCodes: ["cuentas.read", "oportunidades.read", "oportunidades.create",
+        "oportunidades.update", "oportunidades.change_closed_status"],
+    });
+    cleanup.roleIds.push(roleId);
+    const email = `${TEST_PREFIX}.closed.status@example.com`;
+    const userId = await createUser({
+      fullName: "Closed Status Editor", email, roleIds: [roleId],
+    });
+    cleanup.userIds.push(userId);
+    const fixture = await createOwnedOpportunityFlowFixture(`${TEST_PREFIX}_closed_status`, {
+      actorUserId: userId, ownerUserId: userId, loginEmail: email,
+    });
+    const endpoint = `/api/opportunities/${fixture.opportunityId}/commercial-status`;
+    const auth = `Bearer ${fixture.token}`;
+    const questions = await query(
+      "SELECT id FROM opportunity_stage_questions WHERE sales_stage_id = ? AND is_active = 1 ORDER BY id LIMIT 1",
+      [ctx.catalogIds.salesStageInitialId],
+    );
+    await request(app).post(`/api/opportunities/${fixture.opportunityId}/stage-answers`)
+      .set("Authorization", auth)
+      .send({ answers: [{ questionId: Number(questions[0].id), answerValue: "Necesidad confirmada" }] })
+      .expect(200);
+    const document = await attachOpportunityDocumentForTest({
+      opportunityId: fixture.opportunityId, uploadedByUserId: userId,
+      suffix: `${TEST_PREFIX}_closed_status`, text: "Documento conservado",
+    });
+    const savedAnswers = await query(
+      "SELECT * FROM opportunity_stage_question_answers WHERE opportunity_id = ? ORDER BY id",
+      [fixture.opportunityId],
+    );
+    const setState = async (code, stageId = ctx.catalogIds.salesStageWaitingId) => {
+      const statusId = await getCatalogId("opportunity_commercial_statuses", code);
+      await query(
+        `UPDATE opportunities SET commercial_status_id = ?, sales_stage_id = ?,
+         commercial_closed_at = NOW(3), commercial_close_reason = 'Cierre original',
+         updated_at = NOW(3) WHERE id = ?`,
+        [statusId, stageId, fixture.opportunityId],
+      );
+    };
+    const version = async () => {
+      const response = await request(app).get(`/api/opportunities/${fixture.opportunityId}`)
+        .set("Authorization", auth).expect(200);
+      return response.body.updated_at;
+    };
+    for (const code of ["ganada", "perdida", "anulada"]) {
+      await setState(code);
+      if (code === "anulada") {
+        const inactiveId = await getCatalogId("opportunity_activation_statuses", "desactivada");
+        await query("UPDATE opportunities SET activation_status_id = ? WHERE id = ?", [inactiveId, fixture.opportunityId]);
+      }
+      const expectedUpdatedAt = await version();
+      const same = await request(app).post(endpoint).set("Authorization", auth)
+        .send({ statusCode: code, expectedStatusCode: code, expectedUpdatedAt, reason: "Sin cambio" });
+      expect(same.status).toBe(400);
+      expect(await version()).toBe(expectedUpdatedAt);
+      const reopened = await request(app).post(endpoint).set("Authorization", auth)
+        .send({ statusCode: "en_proceso", expectedStatusCode: code, expectedUpdatedAt, reason: `Reabrir ${code}` });
+      expect(reopened.status, JSON.stringify(reopened.body)).toBe(200);
+      const snapshot = await getOpportunityCommercialSnapshot(fixture.opportunityId);
+      expect(snapshot).toMatchObject({
+        commercial_status_code: "en_proceso", sales_stage_code: "waiting",
+        activation_status_code: code === "anulada" ? "desactivada" : "activada",
+        commercial_closed_at: null, commercial_close_reason: null,
+      });
+      const stale = await request(app).post(endpoint).set("Authorization", auth)
+        .send({ statusCode: "perdida", expectedStatusCode: code, expectedUpdatedAt, reason: "Versión vieja" });
+      expect(stale.status).toBe(409);
+    }
+    expect(await getAuditActionsForOpportunity(fixture.opportunityId, "commercial_reopened")).toHaveLength(3);
+    expect(await query(
+      "SELECT * FROM opportunity_stage_question_answers WHERE opportunity_id = ? ORDER BY id",
+      [fixture.opportunityId],
+    )).toEqual(savedAnswers);
+    const preservedDocuments = await query(
+      "SELECT document_id FROM opportunity_document_links WHERE opportunity_id = ?",
+      [fixture.opportunityId],
+    );
+    expect(preservedDocuments.map((row) => Number(row.document_id))).toContain(document.documentId);
+    await query("UPDATE opportunities SET activation_status_id = ? WHERE id = ?",
+      [ctx.catalogIds.opportunityActiveStatusId, fixture.opportunityId]);
+    await setState("perdida");
+    const expectedUpdatedAt = await version();
+    const blank = await request(app).post(endpoint).set("Authorization", auth)
+      .send({ statusCode: "anulada", expectedStatusCode: "perdida", expectedUpdatedAt, reason: " " });
+    expect(blank.status).toBe(400);
+    const corrected = await request(app).post(endpoint).set("Authorization", auth)
+      .send({ statusCode: "anulada", expectedStatusCode: "perdida", expectedUpdatedAt, reason: "Cierre equivocado" });
+    expect(corrected.status).toBe(200);
+    expect(await getOpportunityCommercialSnapshot(fixture.opportunityId)).toMatchObject({
+      commercial_status_code: "anulada", commercial_close_reason: "Cierre equivocado",
+      sales_stage_code: "waiting", activation_status_code: "activada",
+    });
+    const corrections = await getAuditActionsForOpportunity(fixture.opportunityId, "commercial_status_corrected");
+    expect(corrections).toHaveLength(1);
+    const fields = typeof corrections[0].changed_fields === "string"
+      ? JSON.parse(corrections[0].changed_fields) : corrections[0].changed_fields;
+    expect(fields.commercial_status_code).toEqual({ before: "perdida", after: "anulada" });
+    expect(fields.commercial_close_reason).toEqual({ before: "Cierre original", after: "Cierre equivocado" });
+    const won = await request(app).post(endpoint).set("Authorization", auth)
+      .send({ statusCode: "ganada", expectedStatusCode: "anulada", expectedUpdatedAt: await version(), reason: "Venta confirmada" });
+    expect(won.status).toBe(200);
+
+    for (const from of ["ganada", "perdida", "anulada"]) {
+      for (const to of ["ganada", "perdida", "anulada"].filter((code) => code !== from)) {
+        await setState(from);
+        const response = await request(app).post(endpoint).set("Authorization", auth)
+          .send({ statusCode: to, expectedStatusCode: from, expectedUpdatedAt: await version(), reason: `${from} a ${to}` });
+        expect(response.status, JSON.stringify(response.body)).toBe(200);
+        expect((await getOpportunityCommercialSnapshot(fixture.opportunityId)).commercial_status_code).toBe(to);
+      }
+    }
+
+    await setState("perdida", ctx.catalogIds.salesStageInitialId);
+    const blockedWon = await request(app).post(endpoint).set("Authorization", auth)
+      .send({ statusCode: "ganada", expectedStatusCode: "perdida", expectedUpdatedAt: await version(), reason: "Intento fuera de Waiting" });
+    expect(blockedWon.status).toBe(400);
+    expect(blockedWon.body.message).toContain("Waiting");
+
+    await setState("perdida");
+    const oldVersion = await version();
+    await query("UPDATE opportunities SET updated_at = DATE_ADD(updated_at, INTERVAL 1 SECOND) WHERE id = ?",
+      [fixture.opportunityId]);
+    const staleSameStatus = await request(app).post(endpoint).set("Authorization", auth)
+      .send({ statusCode: "en_proceso", expectedStatusCode: "perdida", expectedUpdatedAt: oldVersion, reason: "Datos desactualizados" });
+    expect(staleSameStatus.status).toBe(409);
+    const concurrentPayload = {
+      statusCode: "en_proceso", expectedStatusCode: "perdida",
+      expectedUpdatedAt: await version(), reason: "Reapertura simultánea",
+    };
+    const concurrent = await Promise.all([
+      request(app).post(endpoint).set("Authorization", auth).send(concurrentPayload),
+      request(app).post(endpoint).set("Authorization", auth).send(concurrentPayload),
+    ]);
+    expect(concurrent.map((response) => response.status).sort()).toEqual([200, 409]);
+
+    const ordinary = await createOwnedOpportunityFlowFixture(`${TEST_PREFIX}_closed_no_permission`);
+    const denied = await request(app)
+      .post(`/api/opportunities/${ordinary.opportunityId}/commercial-status`)
+      .set("Authorization", `Bearer ${ordinary.token}`)
+      .send({ statusCode: "en_proceso", expectedStatusCode: "perdida", expectedUpdatedAt, reason: "Sin permiso" });
+    expect(denied.status).toBe(403);
+    const foreign = await request(app)
+      .post(`/api/opportunities/${ordinary.opportunityId}/commercial-status`)
+      .set("Authorization", auth)
+      .send({ statusCode: "en_proceso", expectedStatusCode: "perdida", expectedUpdatedAt, reason: "Cuenta ajena" });
+    expect(foreign.status).toBe(404);
+  });
+
   test("catalogos.opportunity-stage-questions-admin permite crear, editar, reordenar y desactivar preguntas", async () => {
     const loginResponse = await login(
       request(app),

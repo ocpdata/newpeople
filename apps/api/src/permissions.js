@@ -56,6 +56,13 @@ const CORE_PERMISSIONS = [
       "Solicitar el alta de oportunidades como Pendientes de activación. Requiere habilitar el flujo de pendientes, salvo si tiene oportunidades.read_all. No permite activarlas; con oportunidades.create se crean activadas.",
   },
   {
+    code: "oportunidades.change_closed_status",
+    module: "oportunidades",
+    action: "change_closed_status",
+    description:
+      "Corregir el estado comercial o reabrir oportunidades cerradas accesibles, con motivo y auditoría. Requiere oportunidades.update; no concede edición general de Ganadas ni cambios de etapa.",
+  },
+  {
     code: "oportunidades.update_won",
     module: "oportunidades",
     action: "update_won",

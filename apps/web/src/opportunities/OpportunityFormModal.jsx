@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import DatePicker from "react-datepicker";
 import { es } from "date-fns/locale";
 import ModalInlineHelp from "../help/ModalInlineHelp";
@@ -30,11 +30,13 @@ function withCurrentCatalogOption(options, currentValue, labelKey = "name") {
   ];
 }
 
-function OpportunityFormModal({
-  isOpen,
+function OpportunityFormModalContent({
   error,
   editingOpportunityId,
   canEditWonOpportunity = false,
+  canChangeClosedStatus = false,
+  hasUnsavedOpportunityChanges = false,
+  changeClosedOpportunityStatus,
   editOpportunityAudit,
   currentCommercialStage,
   currentSalesStageName,
@@ -109,7 +111,9 @@ function OpportunityFormModal({
   canRequestManufacturerRegistrations,
   canUpdateManufacturerRegistrations,
 }) {
-  if (!isOpen) return null;
+  const [changingClosedStatus, setChangingClosedStatus] = useState(false);
+  const [newCommercialStatus, setNewCommercialStatus] = useState("");
+  const [statusChangeReason, setStatusChangeReason] = useState("");
 
   const isDocumentUploadLocked =
     uploadingOpportunityDocuments || loadingDocumentSession;
@@ -204,6 +208,7 @@ function OpportunityFormModal({
   const isModalLocked =
     isDocumentUploadLocked ||
     savingOpportunity ||
+    savingCommercialAction === "change-closed-status" ||
     isCommercialSuggestionsInProgress;
 
   const progressOverlayTitle = isStageValidationInProgress
@@ -264,10 +269,6 @@ function OpportunityFormModal({
   );
   const [isCommercialSectionExpanded, setIsCommercialSectionExpanded] =
     useState(Boolean(editingOpportunityId));
-
-  useEffect(() => {
-    setIsCommercialSectionExpanded(Boolean(editingOpportunityId));
-  }, [editingOpportunityId, isOpen]);
 
   function handleClose() {
     if (
@@ -394,11 +395,137 @@ function OpportunityFormModal({
               </p>
             ) : null}
 
+            {editingOpportunityId && isCommercialFlowClosed && canChangeClosedStatus ? (
+              <section className="account-form-section opportunity-status-change" aria-label="Cambiar estado comercial">
+                <div className="opportunity-status-change-header">
+                  <div className="opportunity-status-change-copy">
+                    <div className="opportunity-status-change-title">
+                      <h4>Estado comercial</h4>
+                      <span className={getCommercialStatusIconBadgeClass(commercialContext?.commercialStatus?.name)}>
+                        <span className="status-dot" aria-hidden="true" />
+                        {commercialContext?.commercialStatus?.name}
+                      </span>
+                    </div>
+                    <p className="field-hint">
+                      Corrige el cierre o reabre la oportunidad sin perder su información.
+                    </p>
+                  </div>
+                  {!changingClosedStatus ? (
+                    <button
+                      type="button"
+                      className="opportunity-status-change-trigger"
+                      disabled={isModalLocked || hasUnsavedOpportunityChanges}
+                      onClick={() => setChangingClosedStatus(true)}
+                      aria-expanded={false}
+                      aria-controls="opportunity-status-change-form"
+                    >
+                      Cambiar estado comercial
+                    </button>
+                  ) : null}
+                </div>
+                {hasUnsavedOpportunityChanges ? (
+                  <p className="field-hint" role="status">
+                    Guarda o descarta los cambios pendientes antes de cambiar el estado comercial.
+                  </p>
+                ) : null}
+                {changingClosedStatus ? (
+                  <form
+                    id="opportunity-status-change-form"
+                    className="opportunity-status-change-form"
+                    aria-label="Confirmar cambio de estado comercial"
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      if (await changeClosedOpportunityStatus({
+                        statusCode: newCommercialStatus, reason: statusChangeReason.trim(),
+                      })) {
+                        setChangingClosedStatus(false);
+                        setNewCommercialStatus("");
+                        setStatusChangeReason("");
+                      }
+                    }}
+                  >
+                    <div className="field-group opportunity-status-change-destination">
+                      <label htmlFor="opportunity-new-commercial-status">Nuevo estado comercial</label>
+                      <select
+                        id="opportunity-new-commercial-status"
+                        required
+                        value={newCommercialStatus}
+                        disabled={isModalLocked}
+                        onChange={(event) => setNewCommercialStatus(event.target.value)}
+                      >
+                        <option value="">Selecciona un estado</option>
+                        {[
+                          { code: "en_proceso", name: "En proceso (reabrir)" },
+                          { code: "ganada", name: "Ganada" },
+                          { code: "perdida", name: "Perdida" },
+                          { code: "anulada", name: "Anulada" },
+                        ].filter((status) => status.code !== commercialContext?.commercialStatus?.code)
+                          .map((status) => (
+                            <option
+                              key={status.code}
+                              value={status.code}
+                              disabled={status.code === "ganada" && currentCommercialStage?.code !== "waiting"}
+                            >
+                              {status.name}
+                            </option>
+                          ))}
+                      </select>
+                      <p className="field-hint">
+                        Reabrir conserva la etapa y su información.
+                        Ganada requiere Waiting.
+                      </p>
+                    </div>
+                    <div className="field-group opportunity-status-change-reason">
+                      <label htmlFor="opportunity-status-change-reason">Motivo del cambio de estado</label>
+                      <textarea
+                        id="opportunity-status-change-reason"
+                        required
+                        rows={2}
+                        placeholder="Describe brevemente el motivo del cambio."
+                        maxLength={5000}
+                        value={statusChangeReason}
+                        disabled={isModalLocked}
+                        onChange={(event) => setStatusChangeReason(event.target.value)}
+                      />
+                    </div>
+                    <div className="opportunity-status-change-footer">
+                      <p className="field-hint">
+                        El cambio quedará registrado en auditoría.
+                      </p>
+                      <div className="opportunity-status-change-actions">
+                      <button
+                        type="button"
+                        className="opportunity-status-change-cancel"
+                        disabled={isModalLocked}
+                        onClick={() => {
+                          setChangingClosedStatus(false);
+                          setNewCommercialStatus("");
+                          setStatusChangeReason("");
+                        }}
+                      >
+                        Cancelar cambio de estado
+                      </button>
+                      <button
+                        type="submit"
+                        className="primary"
+                        disabled={isModalLocked || hasUnsavedOpportunityChanges ||
+                          !newCommercialStatus || !statusChangeReason.trim()}
+                      >
+                        Confirmar cambio de estado
+                      </button>
+                      </div>
+                    </div>
+                  </form>
+                ) : null}
+              </section>
+            ) : null}
+
             <fieldset
               className="interaction-detail-lock-shell"
               disabled={
                 isModalLocked ||
                 isStageValidationBlocking ||
+                changingClosedStatus ||
                 isWonOpportunityReadOnly
               }
             >
@@ -1474,4 +1601,6 @@ function OpportunityFormModal({
   );
 }
 
-export default OpportunityFormModal;
+export default function OpportunityFormModal({ isOpen, ...props }) {
+  return isOpen ? <OpportunityFormModalContent key={props.editingOpportunityId || "new"} {...props} /> : null;
+}

@@ -29,6 +29,8 @@ function OpportunitiesPage({ currentUser, can }) {
     if (coachHandoff.token) setLinkNotice("");
   }, [coachHandoff.token]);
   const {
+    hasUnsavedOpportunityChanges,
+    changeClosedOpportunityStatus,
     opportunityStatusFilter,
     setOpportunityStatusFilter,
     opportunityQuery,
@@ -442,6 +444,11 @@ function OpportunitiesPage({ currentUser, can }) {
       />
 
       <OpportunityFormModal
+        canChangeClosedStatus={
+          can("oportunidades.update") && can("oportunidades.change_closed_status")
+        }
+        hasUnsavedOpportunityChanges={hasUnsavedOpportunityChanges}
+        changeClosedOpportunityStatus={changeClosedOpportunityStatus}
         isOpen={showOpportunityModal}
         error={showOpportunityModal ? error : ""}
         editingOpportunityId={editingOpportunityId}

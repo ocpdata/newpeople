@@ -35,6 +35,7 @@ Gestion de oportunidades comerciales asociadas a cuentas y contactos:
 - `oportunidades.update` permite editar oportunidades que siguen `En proceso`.
 - `oportunidades.update_won` permite editar los campos de una oportunidad `Ganada`, además de `oportunidades.update`.
 - El permiso `oportunidades.update_won` no reabre la oportunidad ni permite cambiar su etapa o estado comercial.
+- `oportunidades.change_closed_status`, junto con `oportunidades.update`, permite corregir el cierre o reabrir una oportunidad accesible. No requiere `update_won` para esta acción específica ni concede edición de los demás campos de una Ganada. Se asigna desde Roles y permisos.
 - Cambiar la activación posteriormente requiere `oportunidades.update` y `oportunidades.create`, sujeto a las reglas del flujo; no equivale a cambiar el estado comercial.
 - El rol `Administrador` no sustituye esta regla; para activacion manda el permiso explicito.
 
@@ -52,8 +53,19 @@ Las descripciones en Roles y permisos también explican el alcance por cuentas y
 - El retroceso solo es valido mientras la oportunidad siga `En proceso`.
 - `Ganada` solo puede aplicarse como cierre comercial desde `Waiting`.
 - `Perdida` y `Anulada` pueden aplicarse desde cualquier etapa, pero exigen motivo.
-- Una oportunidad cerrada ya no puede avanzar, retroceder ni guardar nuevas respuestas de etapa.
+- Mientras una oportunidad esté cerrada no puede avanzar, retroceder ni guardar nuevas respuestas de etapa.
 - El estado de activacion sigue siendo independiente del flujo comercial.
+
+### Correccion y reapertura de oportunidades cerradas
+
+- En el modal Editar oportunidad, la acción `Cambiar estado comercial` está disponible para Ganada, Perdida o Anulada si se tienen los permisos indicados.
+- Permite volver a `En proceso` o corregir el resultado entre estados cerrados. Ganada sigue requiriendo la etapa `Waiting`; no se permite seleccionar el mismo estado.
+- El motivo es obligatorio en todos estos cambios. La confirmación es independiente de `Guardar cambios`; antes deben guardarse o descartarse los cambios pendientes del formulario.
+- Reabrir conserva la etapa, respuestas, documentos y activación; limpia la fecha y el motivo del cierre vigente. El cierre anterior y el motivo de reapertura quedan en auditoría.
+- Corregir el resultado establece una nueva fecha y motivo de cierre, conservando los anteriores en auditoría.
+- El cambio y la auditoría se guardan en la misma transacción. Si otro usuario modificó la oportunidad desde su apertura, responde `409` y se debe cerrar y volver a abrir el modal.
+- Las etapas y respuestas siguen bloqueadas mientras esté cerrada. Solo se habilitan de nuevo al reabrir; el cambio de estado no permite mover etapas simultáneamente.
+- API: `POST /api/opportunities/:id/commercial-status` con `statusCode`, `reason`, `expectedStatusCode` y `expectedUpdatedAt` (fecha ISO de la oportunidad consultada). Los flujos de cierre existentes conservan sus reglas.
 
 ### Pantalla de preguntas comerciales
 
@@ -137,7 +149,7 @@ Los 4 estados comerciales vigentes son:
 - El retroceso solo está disponible mientras la oportunidad siga `En proceso`.
 - `Ganada` solo puede aplicarse desde `Waiting`.
 - `Perdida` y `Anulada` pueden aplicarse desde cualquier etapa, pero exigen motivo.
-- Una oportunidad cerrada como `Ganada`, `Perdida` o `Anulada` ya no puede avanzar, retroceder ni guardar nuevas respuestas.
+- Mientras una oportunidad esté cerrada como `Ganada`, `Perdida` o `Anulada` no puede avanzar, retroceder ni guardar nuevas respuestas.
 - El estado de activacion sigue siendo independiente del flujo comercial.
 
 ## API relacionada (resumen)

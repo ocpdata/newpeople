@@ -438,6 +438,7 @@ export function useOpportunitiesPage({
     presalesUserId: "",
     activationStatusId: "",
   });
+  const savedOpportunityFormRef = useRef(null);
   const sellerFieldReadOnly = useMemo(() => {
     const currentUserId = Number(currentUser?.id || 0);
     if (!currentUserId) return false;
@@ -1711,7 +1712,7 @@ export function useOpportunitiesPage({
 
       await loadExistingOpportunityDocuments(opportunityId);
 
-      setForm({
+      const loadedForm = {
         name: data.name || "",
         amountUsd:
           data.amount_usd === null || data.amount_usd === undefined
@@ -1727,7 +1728,9 @@ export function useOpportunitiesPage({
           ? String(data.presales_user_id)
           : "",
         activationStatusId: String(data.activation_status_id || ""),
-      });
+      };
+      setForm(loadedForm);
+      savedOpportunityFormRef.current = loadedForm;
       setEditOpportunityAudit({
         createdByName: data.created_by_name || "",
         createdAt: data.created_at || "",
@@ -2383,6 +2386,40 @@ export function useOpportunitiesPage({
     if (!editingOpportunityId) return;
     await hydrateOpportunityModal(editingOpportunityId);
     await load();
+  }
+
+  const hasUnsavedOpportunityChanges = Boolean(
+    editingOpportunityId && savedOpportunityFormRef.current &&
+    (Object.keys(form).some((key) => form[key] !== savedOpportunityFormRef.current[key]) ||
+      hasPendingStageChange || hasPendingCommercialClose),
+  );
+
+  async function changeClosedOpportunityStatus({ statusCode, reason }) {
+    setError("");
+    if (hasUnsavedOpportunityChanges) {
+      setError("Guarda o descarta los cambios pendientes antes de cambiar el estado comercial.");
+      return false;
+    }
+    setSavingCommercialAction("change-closed-status");
+    try {
+      const { data } = await api.post(
+        `/api/opportunities/${editingOpportunityId}/commercial-status`,
+        {
+          statusCode,
+          reason,
+          expectedStatusCode: commercialContext.commercialStatus.code,
+          expectedUpdatedAt: editOpportunityAudit.updatedAt,
+        },
+      );
+      await refreshOpportunityCommercialView();
+      setSuccess(data.message);
+      return true;
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError, "No fue posible cambiar el estado comercial."));
+      return false;
+    } finally {
+      setSavingCommercialAction("");
+    }
   }
 
   function resolveStageChangeTarget({ mode, targetStageId = null }) {
@@ -3369,6 +3406,8 @@ export function useOpportunitiesPage({
   }
 
   return {
+    hasUnsavedOpportunityChanges,
+    changeClosedOpportunityStatus,
     opportunityStatusFilter,
     setOpportunityStatusFilter,
     opportunityQuery,

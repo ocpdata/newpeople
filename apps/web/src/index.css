@@ -19237,6 +19237,157 @@ td {
   margin-bottom: 8px;
 }
 
+.opportunity-status-change {
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid #dbe5f1;
+  border-radius: 12px;
+  background: #f8fafd;
+}
+
+.opportunity-status-change-header,
+.opportunity-status-change-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.opportunity-status-change-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+
+.opportunity-status-change-copy {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.opportunity-status-change-title {
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.opportunity-status-change .opportunity-status-change-title h4 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.opportunity-status-change .field-hint {
+  margin: 0;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.opportunity-status-change-trigger {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid #c6d6e9;
+  border-radius: 8px;
+  background: #fff;
+  color: #24508a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  box-shadow: none;
+}
+
+.opportunity-status-change-trigger:hover:not(:disabled) {
+  background: #edf4fd;
+  border-color: #93b4dc;
+}
+
+.opportunity-status-change-form {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
+  align-items: start;
+  gap: 14px 20px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #dbe5f1;
+}
+
+.opportunity-status-change-form .field-group {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+}
+
+.opportunity-status-change-form .field-group label {
+  font-size: 12px;
+}
+
+.opportunity-status-change-form select,
+.opportunity-status-change-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cddbea;
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.opportunity-status-change-form select:focus-visible,
+.opportunity-status-change-form textarea:focus-visible {
+  outline: 2px solid #90b8eb;
+  outline-offset: 2px;
+}
+
+.opportunity-status-change-form textarea {
+  min-height: 68px;
+  resize: vertical;
+}
+
+.opportunity-status-change-footer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.opportunity-status-change-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.opportunity-status-change-actions button {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.opportunity-status-change-actions .opportunity-status-change-cancel {
+  background: #fff;
+  border: 1px solid #cddbea;
+  color: #435b78;
+  box-shadow: none;
+}
+
+.opportunity-status-change-actions .opportunity-status-change-cancel:hover:not(:disabled) {
+  background: #edf2f8;
+  border-color: #9fb4ce;
+}
+
+@media (max-width: 640px) {
+  .opportunity-status-change-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .opportunity-status-change-actions {
+    width: 100%;
+  }
+}
+
 .opportunity-collapsible-section-copy {
   display: grid;
   gap: 4px;

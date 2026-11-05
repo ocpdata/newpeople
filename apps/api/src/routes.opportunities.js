@@ -91,6 +91,9 @@ router.use("/:id", async (req, res, next) => {
     const opportunityState = await getOpportunityStateById(opportunityId);
     if (
       opportunityState?.commercial_status_code === "ganada" &&
+      !(req.method === "POST" && req.path === "/commercial-status" &&
+        hasExplicitOpportunityPermission(req.user, "oportunidades.update") &&
+        hasExplicitOpportunityPermission(req.user, "oportunidades.change_closed_status")) &&
       !hasExplicitOpportunityPermission(req.user, "oportunidades.update_won")
     ) {
       return res.status(403).json({
@@ -238,6 +241,13 @@ const opportunityCommercialCloseSchema = z.object({
   statusCode: z.enum(["ganada", "perdida", "anulada"]),
   reason: z.string().trim().max(5000).optional().nullable(),
 });
+
+const opportunityCommercialStatusSchema = z.object({
+  statusCode: z.enum(["en_proceso", "ganada", "perdida", "anulada"]),
+  reason: z.string().trim().min(1).max(5000),
+  expectedStatusCode: z.enum(["ganada", "perdida", "anulada"]),
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
+}).strict();
 
 const opportunityStageValidationSchema = z.object({
   note: z.string().trim().max(5000).optional().nullable(),
@@ -3280,6 +3290,101 @@ router.post(
         .status(500)
         .json({ message: "No fue posible crear la oportunidad" });
     }
+  },
+);
+
+router.post(
+  "/:id/commercial-status",
+  requirePermission("oportunidades.update"),
+  requirePermission("oportunidades.change_closed_status"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Id de oportunidad invalido" });
+    }
+    if (!hasExplicitOpportunityPermission(req.user, "oportunidades.update") ||
+        !hasExplicitOpportunityPermission(req.user, "oportunidades.change_closed_status")) {
+      return res.status(403).json({
+        message: "No autorizado para cambiar el estado de oportunidades cerradas",
+        requiredPermission: "oportunidades.change_closed_status",
+      });
+    }
+    const parsed = opportunityCommercialStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Datos invalidos", errors: parsed.error.flatten() });
+    }
+    const body = parsed.data;
+    const result = await withTransaction(async (connection) => {
+      const [rows] = await connection.query(
+        `SELECT o.*, cs.code AS commercial_status_code, s.code AS sales_stage_code
+         FROM opportunities o
+         INNER JOIN opportunity_commercial_statuses cs ON cs.id = o.commercial_status_id
+         INNER JOIN opportunity_sales_stages s ON s.id = o.sales_stage_id
+         WHERE o.id = ? FOR UPDATE`,
+        [id],
+      );
+      const before = rows[0];
+      if (!before) return { status: 404, message: "Oportunidad no encontrada" };
+      if (before.commercial_status_code !== body.expectedStatusCode ||
+          new Date(before.updated_at).getTime() !== new Date(body.expectedUpdatedAt).getTime()) {
+        return {
+          status: 409,
+          message: "La oportunidad cambió desde que abriste el modal. Cierra y vuelve a abrir la oportunidad antes de cambiar su estado.",
+        };
+      }
+      if (!isClosedCommercialStatus(before.commercial_status_code)) {
+        return { status: 400, message: "Esta acción solo permite corregir o reabrir oportunidades cerradas" };
+      }
+      if (before.commercial_status_code === body.statusCode) {
+        return { status: 400, message: "Selecciona un estado diferente al actual" };
+      }
+      if (body.statusCode === "ganada" && before.sales_stage_code !== "waiting") {
+        return { status: 400, message: "Solo puedes marcar como ganada una oportunidad en Waiting" };
+      }
+      const [statuses] = await connection.query(
+        "SELECT id FROM opportunity_commercial_statuses WHERE code = ? LIMIT 1",
+        [body.statusCode],
+      );
+      if (!statuses[0]) return { status: 400, message: "Estado comercial invalido" };
+      const reopened = body.statusCode === "en_proceso";
+      const now = new Date(Math.max(Date.now(), new Date(before.updated_at).getTime() + 1));
+      const closedAt = reopened ? null : now;
+      const closeReason = reopened ? null : body.reason;
+      await mutateAuditedOpportunity({ connection, req, opportunityId: id },
+        `UPDATE opportunities
+         SET commercial_status_id = ?, commercial_closed_at = ?, commercial_close_reason = ?,
+             updated_by = ?, updated_at = ?
+         WHERE id = ?`,
+        [statuses[0].id, closedAt, closeReason, req.user.id, now, id],
+      );
+      await logAuditEvent({
+        connection, required: true, req, module: "oportunidades",
+        action: reopened ? "commercial_reopened" : "commercial_status_corrected",
+        entityType: "opportunity", entityId: id,
+        detail: body.reason,
+        before: {
+          commercial_status_code: before.commercial_status_code,
+          commercial_closed_at: before.commercial_closed_at,
+          commercial_close_reason: before.commercial_close_reason,
+        },
+        after: {
+          commercial_status_code: body.statusCode,
+          commercial_closed_at: closedAt,
+          commercial_close_reason: closeReason,
+          reason: body.reason,
+        },
+      });
+      return { status: 200, message: reopened ? "Oportunidad reabierta" : "Estado comercial actualizado" };
+    });
+    if (result.status === 200) {
+      refreshOpportunityRecommendedStrategy({
+        opportunityId: id,
+        userId: Number(req.user.id),
+      }).catch((error) => {
+        console.error("[opportunities] refreshOpportunityRecommendedStrategy failed:", error);
+      });
+    }
+    return res.status(result.status).json({ message: result.message });
   },
 );
 
