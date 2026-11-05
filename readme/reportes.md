@@ -109,6 +109,15 @@ aceptacion. No se incluye filtro de fecha de aceptacion en esta version.
 - El selector de detalle alterna entre importes de todas las cotizaciones consideradas
   e importes de las coincidentes. No cambia la seleccion de oportunidades.
 - Los importes de oportunidades y de cotizaciones no se suman entre si.
+- Se conserva el desglose por moneda y se agrega un total cotizado equivalente en
+  USD. Cada cotizacion en USD aporta su importe directo; las demas se convierten
+  individualmente dividiendo por el cambio guardado en su version actual, antes
+  de sumar. No se usa un cambio unico por moneda ni una tasa de mercado.
+- El equivalente cubre todas las paginas y sigue el selector Todas/Solo las que
+  cumplen el filtro. Usa los mismos descuentos e IVA que los totales por moneda.
+- Si faltan moneda, importe o cambio valido, se muestra Subtotal convertible y
+  la cantidad de cotizaciones excluidas. Para monedas distintas de USD se mantiene
+  el criterio del detalle: cambio positivo y distinto de 1. No se asume un cambio.
 
 ## API
 
@@ -118,6 +127,9 @@ aceptacion. No se incluye filtro de fecha de aceptacion en esta version.
   devuelve `{page, pageSize, total, summary, items}`.
 - Cada cotizacion incluye `purchaseOrders` con `documentId`, `source`,
   `originalFileName`, `amount` y `currencyCode` por orden.
+- `summary.quotedUsd` incluye `amount`, `matchingAmount`, `missingCount` y
+  `matchingMissingCount`: subtotales convertibles y cantidades sin conversion para
+  todas las cotizaciones consideradas y para las coincidentes, respectivamente.
 - Parametros: `preset`, `accountId`, `sellerUserId`, `presalesUserId`,
   `commercialStatuses`, `quotationStatuses` (codigos separados por coma),
   `quotationPresence`, `opportunityActivation`, `quotationActivation`,

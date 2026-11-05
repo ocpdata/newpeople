@@ -22,12 +22,16 @@ const payload = {
   summary: {
     opportunityCount: 11, wonCount: 3, opportunityAmountUsd: 1500,
     quotationCount: 5, acceptedCount: 2, matchingCount: 2,
-    currencies: [{ currency: "USD", amount: 365.4, matchingAmount: 208.8 }],
+    quotedUsd: { amount: 375.84, matchingAmount: 219.24, missingCount: 0, matchingMissingCount: 0 },
+    currencies: [
+      { currency: "USD", amount: 365.4, matchingAmount: 208.8 },
+      { currency: "MXN", amount: 208.8, matchingAmount: 208.8 },
+    ],
   },
   items: [opportunity],
 };
 
-async function openReport(page, { permissions = ["oportunidades.read", "cotizaciones.operacion"], fail = false } = {}) {
+async function openReport(page, { permissions = ["oportunidades.read", "cotizaciones.operacion"], fail = false, reportPayload = payload } = {}) {
   const requests = [];
   await page.addInitScript(() => window.localStorage.setItem("crm_token", "report-test"));
   await page.route("**/api/**", async (route) => {
@@ -50,8 +54,11 @@ async function openReport(page, { permissions = ["oportunidades.read", "cotizaci
       const empty = url.searchParams.get("search") === "sin resultados";
       return route.fulfill({
         json: {
-          ...payload, page: Number(url.searchParams.get("page") || 1),
-          ...(empty ? { total: 0, items: [], summary: { ...payload.summary, opportunityCount: 0 } } : {}),
+          ...reportPayload, page: Number(url.searchParams.get("page") || 1),
+          ...(empty ? { total: 0, items: [], summary: {
+            ...reportPayload.summary, opportunityCount: 0,
+            quotedUsd: { amount: 0, matchingAmount: 0, missingCount: 0, matchingMissingCount: 0 },
+          } } : {}),
         },
       });
     }
@@ -67,6 +74,9 @@ test("navega desde Reportes y muestra las cotizaciones actuales agrupadas", asyn
   await expect(page.getByRole("heading", { name: "Oportunidades y cotizaciones" })).toBeVisible();
   await expect(page.getByLabel("Anulada", { exact: true })).toHaveCount(0);
   await expect(page.getByText("#3 Proyecto comercial", { exact: true })).toBeVisible();
+  await expect(page.getByText("Total cotizado equivalente en USD: 375.84", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cotizado USD: 365.40", { exact: true })).toBeVisible();
+  await expect(page.getByText("Cotizado MXN: 208.80", { exact: true })).toBeVisible();
   const opportunityRow = page.getByRole("row").filter({ has: page.getByText("#3 Proyecto comercial", { exact: true }) });
   await expect(opportunityRow.getByRole("cell", { name: "300.00", exact: true })).toBeVisible();
   await expect(opportunityRow.getByText("#301: 104.40 USD", { exact: true })).toBeVisible();
@@ -100,7 +110,24 @@ test("navega desde Reportes y muestra las cotizaciones actuales agrupadas", asyn
   await expect(opportunityRow.getByText("Valor sin registrar", { exact: true })).toHaveCount(0);
   await expect(opportunityRow.getByText("#301: 104.40 USD", { exact: true })).toBeVisible();
   await expect(page.getByText("Cotizado USD: 208.80")).toBeVisible();
+  await expect(page.getByText("Total cotizado equivalente en USD: 219.24", { exact: true })).toBeVisible();
   await expect(page.getByRole("columnheader").filter({ hasText: /Estado|Activación|Fecha|Cierre/ })).toHaveCount(0);
+});
+
+test("advierte cuando el equivalente es parcial y cambia con la seleccion de cotizaciones", async ({ page }) => {
+  await openReport(page, { reportPayload: {
+    ...payload, summary: {
+      ...payload.summary,
+      quotedUsd: { amount: 365.4, matchingAmount: 208.8, missingCount: 1, matchingMissingCount: 0 },
+    },
+  } });
+  await page.getByRole("link", { name: /Oportunidades y cotizaciones/ }).click();
+  await expect(page.getByText(/Subtotal convertible en USD: 365.40/)).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("1 cotización sin conversión por falta de moneda, importe o tipo de cambio válido.");
+  await expect(page.getByText("Cotizado MXN: 208.80")).toBeVisible();
+  await page.getByLabel("Mostrar cotizaciones").selectOption("matching");
+  await expect(page.getByText("Total cotizado equivalente en USD: 208.80", { exact: true })).toBeVisible();
+  await expect(page.getByText(/cotizaci[oó]n.*sin conversión/)).toHaveCount(0);
 });
 
 test("organiza resumen y detalle en escritorio y permite consultar la tabla en movil", async ({ page }, testInfo) => {

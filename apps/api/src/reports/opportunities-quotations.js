@@ -213,10 +213,20 @@ async function readReport(user, filters, read) {
 
   const totalSql = buildQuotationVersionEffectiveTotalSql();
   const totalsJoin = buildQuotationVersionBaseSaleTotalJoin();
+  const usdTotalSql = `CASE
+    WHEN UPPER(TRIM(lv.currency_code)) = 'USD' THEN ${totalSql}
+    WHEN NULLIF(TRIM(lv.currency_code), '') IS NOT NULL
+      AND lv.exchange_rate > 0 AND lv.exchange_rate <> 1
+      THEN (${totalSql}) / lv.exchange_rate
+    ELSE NULL END`;
   const currencyRows = await read(`${cte}
     ${reportSelect} lv.currency_code,
            SUM(${totalSql}) AS amount,
-           SUM(CASE WHEN lv.matches_filters = 1 THEN ${totalSql} ELSE 0 END) AS matching_amount
+           SUM(CASE WHEN lv.matches_filters = 1 THEN ${totalSql} ELSE 0 END) AS matching_amount,
+           SUM(${usdTotalSql}) AS usd_amount,
+           SUM(CASE WHEN lv.matches_filters = 1 THEN ${usdTotalSql} ELSE 0 END) AS matching_usd_amount,
+           SUM((${usdTotalSql}) IS NULL) AS missing_usd_count,
+           SUM(lv.matches_filters = 1 AND (${usdTotalSql}) IS NULL) AS matching_missing_usd_count
     FROM matching_quotations lv
     INNER JOIN selected_opportunities so ON so.id = lv.opportunity_id
     ${totalsJoin}
@@ -250,6 +260,12 @@ async function readReport(user, filters, read) {
       quotationCount: Number(summary.quotation_count),
       acceptedCount: Number(summary.accepted_count),
       matchingCount: Number(summary.matching_count),
+      quotedUsd: currencyRows.reduce((totals, row) => ({
+        amount: totals.amount + Number(row.usd_amount ?? 0),
+        matchingAmount: totals.matchingAmount + Number(row.matching_usd_amount ?? 0),
+        missingCount: totals.missingCount + Number(row.missing_usd_count),
+        matchingMissingCount: totals.matchingMissingCount + Number(row.matching_missing_usd_count),
+      }), { amount: 0, matchingAmount: 0, missingCount: 0, matchingMissingCount: 0 }),
       currencies: currencyRows.map((row) => ({
         currency: row.currency_code,
         amount: numberOrNull(row.amount),

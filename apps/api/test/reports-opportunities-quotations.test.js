@@ -198,6 +198,9 @@ describe("Opportunity and quotation report", () => {
     expect(result.summary).toMatchObject({ quotationCount: 2, acceptedCount: 1, matchingCount: 1 });
     expect(result.summary.currencies[0].amount).toBeCloseTo(156.6);
     expect(result.summary.currencies[0].matchingAmount).toBeCloseTo(104.4);
+    expect(result.summary.quotedUsd).toMatchObject({ missingCount: 0, matchingMissingCount: 0 });
+    expect(result.summary.quotedUsd.amount).toBeCloseTo(156.6);
+    expect(result.summary.quotedUsd.matchingAmount).toBeCloseTo(104.4);
     expect((await report({ preset: "both", quotationStatuses: "borrador" })).total).toBe(0);
   });
 
@@ -223,6 +226,9 @@ describe("Opportunity and quotation report", () => {
     expect(result.summary.currencies[0].amount).toBeCloseTo(208.8);
     expect(result.summary.currencies[0].matchingAmount).toBeCloseTo(208.8);
     expect(result.summary.currencies[1].amount).toBeCloseTo(365.4);
+    expect(result.summary.quotedUsd.amount).toBeCloseTo(375.84);
+    expect(result.summary.quotedUsd.matchingAmount).toBeCloseTo(375.84);
+    expect(result.summary.quotedUsd.missingCount).toBe(0);
     expect(result.items.find((item) => item.id === 2).quotations[0]).toMatchObject({
       currency: "MXN", exchangeRate: 20,
     });
@@ -245,10 +251,65 @@ describe("Opportunity and quotation report", () => {
       expect(first.total).toBe(11);
       expect(second.summary).toEqual(first.summary);
       expect(second.summary.opportunityAmountUsd).toBe(2100);
+      expect(second.summary.quotedUsd.amount).toBeCloseTo(375.84);
     } finally {
       await connection.query("DELETE FROM opportunities WHERE id BETWEEN 100 AND 105");
       await refreshFixtures();
     }
+  });
+
+  it("converts each quotation before summing even when they share a currency", async () => {
+    try {
+      await connection.query("UPDATE quotation_versions SET currency_code = 'MXN', exchange_rate = 10 WHERE id = 3011");
+      await refreshFixtures();
+      const result = await report();
+      expect(result.summary.quotedUsd.amount).toBeCloseTo(281.88);
+      expect(result.summary.currencies.find((item) => item.currency === "MXN").amount).toBeCloseTo(313.2);
+    } finally {
+      await connection.query("UPDATE quotation_versions SET currency_code = 'USD', exchange_rate = 1 WHERE id = 3011");
+      await refreshFixtures();
+    }
+  });
+
+  it.each([null, 0, -2, 1])("excludes invalid non-USD rate %s and counts only matching omissions", async (rate) => {
+    try {
+      await connection.query("UPDATE quotation_versions SET currency_code = 'MXN', exchange_rate = ? WHERE id = 3021", [rate]);
+      await refreshFixtures();
+      const result = await report({ preset: "both" });
+      expect(result.summary.quotedUsd).toMatchObject({ missingCount: 1, matchingMissingCount: 0 });
+      expect(result.summary.quotedUsd.amount).toBeCloseTo(104.4);
+      expect(result.summary.quotedUsd.matchingAmount).toBeCloseTo(104.4);
+      expect(result.summary.currencies.find((item) => item.currency === "MXN").amount).toBeCloseTo(52.2);
+      const matching = await report({ quotationStatuses: "borrador", search: "Oportunidad 3" });
+      expect(matching.summary.quotedUsd).toMatchObject({
+        matchingAmount: 0, missingCount: 1, matchingMissingCount: 1,
+      });
+      expect(matching.summary.quotedUsd.amount).toBeCloseTo(104.4);
+    } finally {
+      await connection.query("UPDATE quotation_versions SET currency_code = 'USD', exchange_rate = 1 WHERE id = 3021");
+      await refreshFixtures();
+    }
+  });
+
+  it("counts absent currency as unconvertible but includes USD without a rate", async () => {
+    try {
+      await connection.query("UPDATE quotation_versions SET currency_code = NULL WHERE id = 2011");
+      await connection.query("UPDATE quotation_versions SET exchange_rate = NULL WHERE currency_code = 'USD'");
+      await refreshFixtures();
+      const result = await report();
+      expect(result.summary.quotedUsd.amount).toBeCloseTo(365.4);
+      expect(result.summary.quotedUsd.missingCount).toBe(1);
+    } finally {
+      await connection.query("UPDATE quotation_versions SET currency_code = 'MXN' WHERE id = 2011");
+      await connection.query("UPDATE quotation_versions SET exchange_rate = 1 WHERE currency_code = 'USD'");
+      await refreshFixtures();
+    }
+  });
+
+  it("returns zero USD totals with no quotations", async () => {
+    expect((await report({ quotationPresence: "without" })).summary.quotedUsd).toEqual({
+      amount: 0, matchingAmount: 0, missingCount: 0, matchingMissingCount: 0,
+    });
   });
 
   it("counts bundle children instead of their parent and excludes grouping items", async () => {

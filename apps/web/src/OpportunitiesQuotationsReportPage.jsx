@@ -80,6 +80,9 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [displayMode, setDisplayMode] = useState("all");
+  const quotedUsd = payload?.summary.quotedUsd;
+  const quotedUsdAmount = displayMode === "matching" ? quotedUsd?.matchingAmount : quotedUsd?.amount;
+  const missingUsdCount = displayMode === "matching" ? quotedUsd?.matchingMissingCount : quotedUsd?.missingCount;
 
   useEffect(() => {
     if (!canReadReport) return;
@@ -242,6 +245,12 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                 </select>
               </label>
               <ul className="report-currency-totals" aria-label="Totales cotizados por moneda">
+                <li className="report-usd-total">
+                  {missingUsdCount ? "Subtotal convertible" : "Total cotizado equivalente"} en USD: {formatAmount(quotedUsdAmount)}
+                  {missingUsdCount > 0 && (
+                    <small role="status">{missingUsdCount} {missingUsdCount === 1 ? "cotización sin conversión" : "cotizaciones sin conversión"} por falta de moneda, importe o tipo de cambio válido.</small>
+                  )}
+                </li>
                 {payload.summary.currencies.map((item) => (
                   <li key={item.currency || "unknown"}>
                     Cotizado {item.currency || "(sin moneda)"}: {formatAmount(displayMode === "matching" ? item.matchingAmount : item.amount)}
@@ -249,7 +258,7 @@ export default function OpportunitiesQuotationsReportPage({ canReadReport }) {
                 ))}
               </ul>
               </div>
-              <p className="report-results-note">Importes cotizados con descuentos e IVA. Cada moneda se totaliza por separado; no se suma al monto de oportunidades.</p>
+              <p className="report-results-note">Importes cotizados con descuentos e IVA. El equivalente en USD usa el tipo de cambio guardado en cada cotización y cubre todas las páginas. Se conservan los totales por moneda; no se suma al monto de oportunidades.</p>
               {!payload.items.length ? <p>No hay resultados para los filtros seleccionados.</p> : (
                 <div className="report-table-scroll">
                   <table className="report-main-table" aria-label="Oportunidades y sus importes">
