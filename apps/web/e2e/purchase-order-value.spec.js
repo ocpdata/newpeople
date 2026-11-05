@@ -1,11 +1,36 @@
 import { expect, test } from "@playwright/test";
 
-async function openProcessing(page, { selected = true, canUpdate = true, failRegistration = false, failRemoval = false } = {}) {
+async function openProcessing(page, {
+  selected = true, canUpdate = true, failRegistration = false, failRemoval = false,
+  failProviderRegistration = false, failProviderRemoval = false,
+  accepted = false, acceptanceRecorded = accepted, failAcceptance = false,
+  completionFailures = 0, staleList = false,
+} = {}) {
+  let quotationStatus = accepted ? "aceptada" : "ganada";
+  let recorded = acceptanceRecorded;
+  const transitions = [];
+  const completions = [];
+  const stageRequests = [];
+  const stages = () => [
+    { stageCode: "quotation_accepted", stageName: "Cotización aceptada",
+      status: quotationStatus === "aceptada" ? "completed" : "not_started",
+      acceptanceRecorded: recorded, stageData: {} },
+    { stageCode: "kickoff_internal", stageName: "Kick Off interno", status: "not_started", stageData: {} },
+  ];
   let value = { amount: null, currencyCode: null };
   let orderIds = selected ? [20] : [];
   const additionalValues = {};
   const registrations = [];
   const removals = [];
+  const providerRegistrations = [];
+  const providerRemovals = [];
+  const providerQuotes = [{ documentId: 30, source: "quotation", originalFileName: "proveedor.pdf" }];
+  const quotationDocuments = [
+    { documentId: 20, originalFileName: "orden-cliente.pdf" },
+    { documentId: 30, originalFileName: "proveedor.pdf" },
+    { documentId: 31, originalFileName: "proveedor-adicional.pdf" },
+    { documentId: 32, originalFileName: "proveedor-otra-version.pdf" },
+  ];
   const closingDocuments = () => {
     const orders = orderIds.map((id) => ({
       documentId: id, source: id === 20 ? "quotation" : "opportunity",
@@ -13,12 +38,12 @@ async function openProcessing(page, { selected = true, canUpdate = true, failReg
       ...(id === 20 ? value : additionalValues[id] || { amount: null, currencyCode: null }),
     }));
     return {
-    quotationDocuments: [{ documentId: 20, originalFileName: "orden-cliente.pdf" }],
+    quotationDocuments,
     opportunityDocuments: [{ documentId: 21, originalFileName: "otro-documento.pdf" }],
     savedSelections: {
       purchaseOrder: orders[0] || null,
       purchaseOrders: orders,
-      providerQuotes: [{ documentId: 30, source: "quotation", originalFileName: "proveedor.pdf" }],
+      providerQuotes,
     },
     };
   };
@@ -31,13 +56,40 @@ async function openProcessing(page, { selected = true, canUpdate = true, failReg
     });
     if (url.pathname === "/api/quotations") return route.fulfill({ json: [{
       id: 1, latestVersionId: 10, latestVersionNumber: 1, latestProposalName: "Proyecto OC",
-      latestStatusCode: "aceptada", latestStatusName: "Aceptada",
+      latestStatusCode: staleList ? "ganada" : quotationStatus,
+      latestStatusName: quotationStatus === "aceptada" ? "Aceptada" : "Ganada",
       latestCurrencyCode: "USD", activationStatusCode: "activada",
     }] });
     if (url.pathname === "/api/quotations/1/processing") return route.fulfill({
-      json: { quotation: {}, permissions: { canUpdate },
-        stages: [{ stageCode: "quotation_accepted", stageName: "Cotización aceptada", status: "completed", stageData: {} }] },
+      json: { quotation: { statusCode: quotationStatus }, permissions: { canUpdate },
+        stages: stages() },
     });
+    if (url.pathname === "/api/quotation-versions/10/transition") {
+      transitions.push(route.request().postDataJSON());
+      if (failAcceptance) return route.fulfill({ status: 500, json: { message: "Error al aceptar cotización" } });
+      quotationStatus = "aceptada";
+      return route.fulfill({ json: { statusCode: "aceptada", statusName: "Aceptada", acceptedAt: "2026-11-05T12:00:00.000Z" } });
+    }
+    if (url.pathname === "/api/quotations/1/processing/stages/quotation_accepted") {
+      stageRequests.push(route.request().postDataJSON());
+      return route.fulfill({ json: { stages: stages() } });
+    }
+    if (url.pathname === "/api/quotations/1/processing/complete-acceptance") {
+      completions.push(route.request().method());
+      if (completionFailures > 0) {
+        completionFailures -= 1;
+        return route.fulfill({ status: 500, json: { message: "Error de registro operativo" } });
+      }
+      recorded = true;
+      return route.fulfill({ json: { stages: stages() } });
+    }
+    if (/\/won-documents\/provider-quotes\/(quotation|opportunity)\/\d+$/.test(url.pathname) && route.request().method() === "DELETE") {
+      providerRemovals.push(url.pathname);
+      if (failProviderRemoval) return route.fulfill({ status: 500, json: { message: "Error al quitar cotización de proveedor" } });
+      const id = Number(url.pathname.split("/").at(-1));
+      providerQuotes.splice(providerQuotes.findIndex((item) => item.documentId === id), 1);
+      return route.fulfill({ json: { message: "Cotizacion de proveedor retirada del cierre" } });
+    }
     if (/\/won-documents\/(quotation|opportunity)\/\d+$/.test(url.pathname) && route.request().method() === "DELETE") {
       removals.push(url.pathname);
       if (failRemoval) return route.fulfill({ status: 500, json: { message: "Error al quitar la orden" } });
@@ -51,6 +103,15 @@ async function openProcessing(page, { selected = true, canUpdate = true, failReg
         registrations.push(route.request().postDataJSON());
         if (failRegistration) return route.fulfill({ status: 500, json: { message: "Error al registrar documento" } });
         orderIds.push(route.request().postDataJSON().documentId);
+      return route.fulfill({ json: closingDocuments() });
+    }
+    if (url.pathname === "/api/quotation-versions/10/won-documents/provider-quotes") {
+      const body = route.request().postDataJSON();
+      providerRegistrations.push(body);
+      if (failProviderRegistration) return route.fulfill({ status: 500, json: { message: "Error al registrar cotización de proveedor" } });
+      providerQuotes.push({
+        ...body, originalFileName: quotationDocuments.find((item) => item.documentId === body.documentId).originalFileName,
+      });
       return route.fulfill({ json: closingDocuments() });
     }
     if (url.pathname === "/api/quotation-versions/10/won-documents") {
@@ -71,8 +132,260 @@ async function openProcessing(page, { selected = true, canUpdate = true, failReg
   });
   await page.goto("/accept-order");
   await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
-  return { registrations, removals, value: () => value };
+  return { registrations, removals, providerRegistrations, providerRemovals,
+    transitions, completions, stageRequests, value: () => value };
 }
+
+async function expectAcceptedClosureLocked(page) {
+  await expect(page.getByRole("button", { name: "Aceptada", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Correo vendedor", exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Archivo de orden de compra", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Archivo de cotización de proveedor", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Valor de la orden de compra", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Moneda de la orden de compra", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Registrar|Quitar .*del cierre|Guardar valor de orden/ })).toHaveCount(0);
+  await expect(page.getByText("Cotización aceptada. No se permiten cambios en los documentos de cierre ni el envío de correo al vendedor.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Descargar documento", exact: true })).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Descargar documento", exact: true }).nth(0)).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Descargar documento", exact: true }).nth(1)).toBeEnabled();
+  await expect(page.getByLabel("Fecha de aceptacion", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Notas", { exact: true })).toBeDisabled();
+}
+
+test("aceptar bloquea el cierre y correo y conserva el bloqueo al reabrir", async ({ page }) => {
+  const state = await openProcessing(page);
+  await page.getByRole("button", { name: "Aceptar", exact: true }).click();
+  await expectAcceptedClosureLocked(page);
+  await expect(page.getByText("Cotización aceptada y registro operativo completado.", { exact: true })).toBeVisible();
+  expect(state.transitions).toEqual([{ actionCode: "aceptar" }]);
+  expect(state.completions).toHaveLength(1);
+  expect(state.stageRequests[0].status).toBe("not_started");
+  await page.getByRole("button", { name: "Cerrar notificacion de exito", exact: true }).click();
+  await page.getByRole("button", { name: "Cerrar procesamiento", exact: true }).click();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await expectAcceptedClosureLocked(page);
+  await expect(page.getByRole("button", { name: "Completar registro", exact: true })).toHaveCount(0);
+});
+
+test("bloquea cotizaciones ya aceptadas segun la respuesta operativa aunque el listado este desactualizado", async ({ page }) => {
+  await openProcessing(page, { accepted: true, staleList: true });
+  await expectAcceptedClosureLocked(page);
+  await expect(page.getByRole("button", { name: "Completar registro", exact: true })).toHaveCount(0);
+  await page.getByRole("tab", { name: /Kick Off interno/ }).click();
+  await expect(page.getByRole("button", { name: "Culminar Kick Off Interno", exact: true })).toBeEnabled();
+});
+
+test("recupera un registro pendiente sin repetir aceptacion ni desbloquear documentos", async ({ page }) => {
+  const state = await openProcessing(page, { completionFailures: 1 });
+  await page.getByRole("button", { name: "Aceptar", exact: true }).click();
+  await expect(page.getByText(/La cotización está aceptada, pero el registro operativo quedó pendiente/)).toBeVisible();
+  await expectAcceptedClosureLocked(page);
+  await page.getByRole("button", { name: "Cerrar notificacion de error", exact: true }).click();
+  await page.getByRole("button", { name: "Cerrar procesamiento", exact: true }).click();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await page.getByRole("button", { name: "Completar registro", exact: true }).click();
+  await expect(page.getByText("Cotización aceptada y registro operativo completado.", { exact: true })).toBeVisible();
+  await expectAcceptedClosureLocked(page);
+  expect(state.transitions).toHaveLength(1);
+  expect(state.completions).toHaveLength(2);
+});
+
+test("un fallo de aceptacion mantiene los documentos editables", async ({ page }) => {
+  await openProcessing(page, { failAcceptance: true });
+  await page.getByRole("button", { name: "Aceptar", exact: true }).click();
+  await expect(page.getByText("Error al aceptar cotización", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Aceptar", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Archivo de cotización de proveedor", { exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Valor de la orden de compra", { exact: true })).toBeEnabled();
+});
+
+test("no permite aceptar mientras guarda un valor ni editar documentos durante la aceptacion", async ({ page }) => {
+  await openProcessing(page);
+  let releaseValue;
+  const valueGate = new Promise((resolve) => { releaseValue = resolve; });
+  await page.route("**/won-documents/quotation/20/value", async (route) => {
+    await valueGate;
+    await route.fallback();
+  });
+  await page.getByLabel("Valor de la orden de compra", { exact: true }).fill("100");
+  await page.getByLabel("Moneda de la orden de compra", { exact: true }).selectOption("USD");
+  await page.getByRole("button", { name: "Guardar valor de orden", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Aceptar", exact: true })).toBeDisabled();
+  releaseValue();
+  await expect(page.getByRole("button", { name: "Aceptar", exact: true })).toBeEnabled();
+  let releaseAcceptance;
+  const acceptanceGate = new Promise((resolve) => { releaseAcceptance = resolve; });
+  await page.route("**/quotation-versions/10/transition", async (route) => {
+    await acceptanceGate;
+    await route.fallback();
+  });
+  await page.getByRole("button", { name: "Aceptar", exact: true }).click();
+  await expect(page.getByLabel("Archivo de cotización de proveedor", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Correo vendedor", exact: true })).toBeDisabled();
+  releaseAcceptance();
+  await expectAcceptedClosureLocked(page);
+});
+
+test("quita solo la cotizacion proveedor elegida y permite agregarla otra vez", async ({ page }) => {
+  const state = await openProcessing(page);
+  const picker = page.getByLabel("Archivo de cotización de proveedor", { exact: true });
+  await picker.selectOption("quotation:31");
+  await page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Quitar cotización de proveedor del cierre: proveedor.pdf", exact: true }).click();
+  await expect(page.getByText("proveedor.pdf", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("proveedor-adicional.pdf", { exact: true })).toBeVisible();
+  await expect(picker.locator("option[value='quotation:30']")).toHaveCount(1);
+  await expect(page.getByRole("group", { name: "Orden de compra: orden-cliente.pdf", exact: true })).toBeVisible();
+  expect(state.providerRemovals).toEqual(["/api/quotation-versions/10/won-documents/provider-quotes/quotation/30"]);
+  await page.getByRole("button", { name: "Cerrar procesamiento", exact: true }).click();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Cotizaciones de proveedores (1)", exact: true })).toBeVisible();
+  await expect(picker.locator("option[value='quotation:30']")).toHaveCount(1);
+  await picker.selectOption("quotation:30");
+  await page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true }).click();
+  await expect(page.getByText("proveedor.pdf", { exact: true })).toBeVisible();
+});
+
+test("cancelar quitar proveedor conserva el documento", async ({ page }) => {
+  const state = await openProcessing(page);
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Quitar cotización de proveedor del cierre: proveedor.pdf", exact: true }).click();
+  expect(state.providerRemovals).toEqual([]);
+  await expect(page.getByText("proveedor.pdf", { exact: true })).toBeVisible();
+});
+
+test("presenta quitar proveedor con el mismo formato que quitar orden", async ({ page }) => {
+  await openProcessing(page);
+  const providerCard = page.getByRole("group", { name: "Cotización de proveedor: proveedor.pdf", exact: true });
+  const orderCard = page.getByRole("group", { name: "Orden de compra: orden-cliente.pdf", exact: true });
+  const providerButton = providerCard.getByRole("button", { name: /Quitar cotización de proveedor del cierre/ });
+  const orderButton = orderCard.getByRole("button", { name: "Quitar orden de compra del cierre", exact: true });
+  await expect(providerButton).toHaveText("Quitar del cierre");
+  await expect(providerCard.getByRole("button", { name: "Descargar documento", exact: true })).toBeVisible();
+  const appearance = (element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, background: style.backgroundColor, border: style.borderColor };
+  };
+  expect(await providerButton.evaluate(appearance)).toEqual(await orderButton.evaluate(appearance));
+  const header = await providerCard.locator("article").boundingBox();
+  const button = await providerButton.boundingBox();
+  expect(button.y).toBeGreaterThanOrEqual(header.y + header.height);
+});
+
+test("alinea los selectores de cierre arriba sin estirar la columna con menos contenido", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openProcessing(page);
+  const sections = page.locator(".processing-accepted-won-documents-card .accept-order-won-documents-section");
+  const orderPicker = sections.nth(0).locator(".purchase-order-document-picker");
+  const providerPicker = sections.nth(1).locator(".purchase-order-document-picker");
+  await expect(providerPicker).toBeVisible();
+  const orderBox = await orderPicker.boundingBox();
+  const providerBox = await providerPicker.boundingBox();
+  expect(Math.abs(orderBox.y - providerBox.y)).toBeLessThan(2);
+  expect(await sections.nth(1).evaluate((element) => getComputedStyle(element).alignContent)).toBe("start");
+  const title = await providerPicker.locator("strong").boundingBox();
+  const description = await providerPicker.locator("p").first().boundingBox();
+  expect(description.y - (title.y + title.height)).toBeLessThan(10);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const providerSection = await sections.nth(1).boundingBox();
+  const orderSection = await sections.nth(0).boundingBox();
+  expect(providerSection.y).toBeGreaterThanOrEqual(orderSection.y + orderSection.height);
+  expect(providerSection.width).toBeLessThanOrEqual(390);
+});
+
+test("un error al quitar proveedor conserva el documento y permite reintentar", async ({ page }) => {
+  await openProcessing(page, { failProviderRemoval: true });
+  page.once("dialog", (dialog) => dialog.accept());
+  const button = page.getByRole("button", { name: "Quitar cotización de proveedor del cierre: proveedor.pdf", exact: true });
+  await button.click();
+  await expect(page.getByRole("alert")).toContainText("Error al quitar cotización de proveedor");
+  await expect(page.getByText("proveedor.pdf", { exact: true })).toBeVisible();
+  await expect(button).toBeEnabled();
+});
+
+test("agrega varias cotizaciones proveedor desde archivos de cotizacion y las conserva al reabrir", async ({ page }) => {
+  const state = await openProcessing(page);
+  const order = page.getByRole("group", { name: "Orden de compra: orden-cliente.pdf", exact: true });
+  await order.getByLabel("Valor de la orden de compra", { exact: true }).fill("1500");
+  await order.getByLabel("Moneda de la orden de compra", { exact: true }).selectOption("MXN");
+  await order.getByRole("button", { name: "Guardar valor de orden", exact: true }).click();
+  await expect(order.getByRole("status")).toContainText("Valor de orden de compra guardado.");
+  const picker = page.getByLabel("Archivo de cotización de proveedor", { exact: true });
+  await expect(page.getByRole("heading", { name: "Cotizaciones de proveedores (1)", exact: true })).toBeVisible();
+  await expect(picker.locator("option[value='quotation:30']")).toHaveCount(0);
+  await expect(picker.locator("option[value='quotation:20']")).toHaveCount(0);
+  await expect(picker.locator("option[value='opportunity:21']")).toHaveCount(0);
+  await picker.selectOption("quotation:31");
+  await page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Cotizaciones de proveedores (2)", exact: true })).toBeVisible();
+  await expect(picker.locator("option[value='quotation:31']")).toHaveCount(0);
+  await picker.selectOption("quotation:32");
+  await page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Cotizaciones de proveedores (3)", exact: true })).toBeVisible();
+  expect(state.providerRegistrations).toEqual([
+    { source: "quotation", documentId: 31 }, { source: "quotation", documentId: 32 },
+  ]);
+  await expect(page.getByRole("group", { name: "Orden de compra: orden-cliente.pdf", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar procesamiento", exact: true }).click();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Cotizaciones de proveedores (3)", exact: true })).toBeVisible();
+  await expect(page.getByText("proveedor-adicional.pdf", { exact: true })).toBeVisible();
+  await expect(page.getByText("proveedor-otra-version.pdf", { exact: true })).toBeVisible();
+  await expect(page.getByText("proveedor.pdf", { exact: true })).toBeVisible();
+  await expect(order.getByLabel("Valor de la orden de compra", { exact: true })).toHaveValue("1500");
+  await expect(order.getByLabel("Moneda de la orden de compra", { exact: true })).toHaveValue("MXN");
+  await expect(picker.locator("option[value='quotation:20']")).toHaveCount(0);
+});
+
+test("actualiza archivos disponibles para proveedor al agregar o quitar una orden de compra", async ({ page }) => {
+  await openProcessing(page, { selected: false });
+  const providerPicker = page.getByLabel("Archivo de cotización de proveedor", { exact: true });
+  await expect(providerPicker.locator("option[value='quotation:20']")).toHaveCount(1);
+  await page.getByLabel("Archivo de orden de compra", { exact: true }).selectOption("quotation:20");
+  await page.getByRole("button", { name: "Registrar orden de compra", exact: true }).click();
+  await expect(providerPicker.locator("option[value='quotation:20']")).toHaveCount(0);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Quitar orden de compra del cierre", exact: true }).click();
+  await expect(providerPicker.locator("option[value='quotation:20']")).toHaveCount(1);
+});
+
+test("excluye del selector de ordenes los documentos de proveedor y actualiza al agregarlos o quitarlos", async ({ page }) => {
+  await openProcessing(page);
+  const orderPicker = page.getByLabel("Archivo de orden de compra", { exact: true });
+  const providerPicker = page.getByLabel("Archivo de cotización de proveedor", { exact: true });
+  await expect(orderPicker.locator("option[value='quotation:30']")).toHaveCount(0);
+  await expect(orderPicker.locator("option[value='quotation:31']")).toHaveCount(1);
+  await providerPicker.selectOption("quotation:31");
+  await page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true }).click();
+  await expect(orderPicker.locator("option[value='quotation:31']")).toHaveCount(0);
+  await page.getByRole("button", { name: "Cerrar procesamiento", exact: true }).click();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await expect(orderPicker.locator("option[value='quotation:31']")).toHaveCount(0);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Quitar cotización de proveedor del cierre: proveedor-adicional.pdf", exact: true }).click();
+  await expect(orderPicker.locator("option[value='quotation:31']")).toHaveCount(1);
+});
+
+test("no permite agregar cotizaciones proveedor con acceso solo de consulta", async ({ page }) => {
+  const state = await openProcessing(page, { canUpdate: false });
+  await expect(page.getByLabel("Archivo de cotización de proveedor", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true })).toHaveCount(0);
+  await expect(page.getByText("proveedor.pdf", { exact: true })).toBeVisible();
+  expect(state.providerRegistrations).toEqual([]);
+  await expect(page.getByRole("button", { name: /Quitar cotización de proveedor del cierre/ })).toHaveCount(0);
+});
+
+test("muestra errores al agregar una cotizacion proveedor sin alterar documentos existentes", async ({ page }) => {
+  await openProcessing(page, { failProviderRegistration: true });
+  await page.getByLabel("Archivo de cotización de proveedor", { exact: true }).selectOption("quotation:31");
+  await page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Error al registrar cotización de proveedor");
+  await expect(page.getByRole("heading", { name: "Cotizaciones de proveedores (1)", exact: true })).toBeVisible();
+  await expect(page.getByText("proveedor.pdf", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Orden de compra: orden-cliente.pdf", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true })).toBeEnabled();
+});
 
 test("guarda el importe y moneda por orden y los recupera al reabrir procesamiento", async ({ page }) => {
   const state = await openProcessing(page);

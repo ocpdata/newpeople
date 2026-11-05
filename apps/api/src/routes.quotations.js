@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { buffer as streamToBuffer } from "node:stream/consumers";
 import { z } from "zod";
 import { query, withTransaction } from "./db.js";
+import { lockQuotationClosure } from "./quotation-closure-lock.js";
 import { purchaseOrderValueSchema } from "./purchase-order-value.js";
 import { ensureQuotationWonDocumentsSchema } from "./quotation-won-documents-schema.js";
 import { QUOTATION_READ_PERMISSIONS as quotationPermissionCodes } from "../../../shared/quotation-permissions.js";
@@ -2355,6 +2356,7 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
           : null;
         return {
           ...found,
+          acceptanceRecorded: String(found.status || "").trim() === "completed",
           stageName: stage.name,
           status: acceptedStageCompleted ? "completed" : "not_started",
           completedAt: effectiveAcceptedAt,
@@ -2373,6 +2375,7 @@ async function listQuotationProcessingStages({ quotation, latestVersion }) {
 
     return {
       stageCode: stage.code,
+      acceptanceRecorded: false,
       stageName: stage.name,
       status:
         stage.code === "quotation_accepted"
@@ -3354,9 +3357,11 @@ async function upsertQuotationProcessingStage({
   blockedReason,
   notes,
   stageData,
+  connection = null,
 }) {
   await ensureQuotationProcessingSchema();
-  const existingRows = await query(
+  const execute = connection ? async (sql, params) => (await connection.query(sql, params))[0] : query;
+  const existingRows = await execute(
     `SELECT id, stage_data_json
      FROM quotation_processing_stages
      WHERE quotation_id = ?
@@ -3390,7 +3395,7 @@ async function upsertQuotationProcessingStage({
   const normalizedCompletedAt = completedAt || null;
   const now = new Date();
 
-  await query(
+  await execute(
     `INSERT INTO quotation_processing_stages
       (quotation_id, quotation_version_id, opportunity_id, stage_code, status_code,
        owner_user_id, target_date, completed_at, blocked_reason, notes,
@@ -4128,6 +4133,7 @@ async function saveQuotationWonDocumentsSelections({
     : null;
 
   await withTransaction(async (conn) => {
+    await lockQuotationClosure(conn, Number(version.id));
     const [existingValues] = await conn.query(
       `SELECT document_id, document_source, purchase_order_amount, purchase_order_currency
        FROM quotation_won_documents WHERE quotation_version_id = ? AND document_role = 'purchase_order'
@@ -13094,31 +13100,28 @@ router.post(
       quotationUrl ? `Abrir cotizacion: ${quotationUrl}` : "",
     ];
 
-    const result = await sendCommercialActionEmail({
-      to: sellerEmail,
-      replyTo: req.user?.email || "",
-      subject,
-      messageBody: [
-        `Hola ${quotation.seller_user_name || ""}`.trim() + ",",
-        "",
-        "Se requiere tu atencion para una cotizacion pendiente en Aceptar Pedido.",
-        "",
-        "Nota:",
-        note,
-      ].join("\n"),
-      metadataLines,
-    });
-
-    if (!result.sent) {
-      return res.status(502).json({
-        message: result.detail || "No fue posible enviar la notificacion",
-        reason: result.reason || "send_failed",
+    const sent = await withTransaction(async (conn) => {
+      await lockQuotationClosure(conn, Number(quotation.latest_version_id));
+      const result = await sendCommercialActionEmail({
+        to: sellerEmail,
+        replyTo: req.user?.email || "",
+        subject,
+        messageBody: [
+          `Hola ${quotation.seller_user_name || ""}`.trim() + ",",
+          "",
+          "Se requiere tu atencion para una cotizacion pendiente en Aceptar Pedido.",
+          "",
+          "Nota:",
+          note,
+        ].join("\n"),
+        metadataLines,
       });
-    }
 
-    const now = new Date();
-    await query(
-      `INSERT INTO quotation_acceptance_notifications
+      if (!result.sent) return { result };
+
+      const now = new Date();
+      await conn.query(
+        `INSERT INTO quotation_acceptance_notifications
         (quotation_id, status_code, note, sent_to_email, sent_to_name, sent_by_user_id, sent_at, created_at, updated_at)
        VALUES (?, 'pendiente', ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
@@ -13129,17 +13132,26 @@ router.post(
         sent_by_user_id = VALUES(sent_by_user_id),
         sent_at = VALUES(sent_at),
         updated_at = VALUES(updated_at)`,
-      [
-        quotationId,
-        note,
-        sellerEmail,
-        quotation.seller_user_name || null,
-        req.user?.id ? Number(req.user.id) : null,
-        now,
-        now,
-        now,
-      ],
-    );
+        [
+          quotationId,
+          note,
+          sellerEmail,
+          quotation.seller_user_name || null,
+          req.user?.id ? Number(req.user.id) : null,
+          now,
+          now,
+          now,
+        ],
+      );
+
+      return { result, now };
+    }, { maxRetries: 1 });
+    if (!sent.result.sent) {
+      return res.status(502).json({
+        message: sent.result.detail || "No fue posible enviar la notificacion",
+        reason: sent.result.reason || "send_failed",
+      });
+    }
 
     await logAuditEvent({
       req,
@@ -13157,7 +13169,7 @@ router.post(
     return res.json({
       message: "Notificacion enviada",
       statusCode: "pendiente",
-      sentAt: now,
+      sentAt: sent.now,
       sellerEmail,
     });
   },
@@ -13333,6 +13345,61 @@ router.get(
   },
 );
 
+router.post(
+  "/quotations/:quotationId/processing/complete-acceptance",
+  requireAnyPermission(acceptOrderAccessPermissionCodes),
+  async (req, res) => {
+    if (!hasQuotationProcessingUpdatePermission(req.user)) {
+      return res.status(403).json({ message: "No autorizado para completar el registro de aceptacion" });
+    }
+    const quotationId = Number(req.params.quotationId);
+    if (!Number.isSafeInteger(quotationId) || quotationId <= 0) {
+      return res.status(400).json({ message: "Id de cotizacion invalido" });
+    }
+    const quotation = await getAccessibleQuotation({ user: req.user, quotationId });
+    if (!quotation) return res.status(404).json({ message: "Cotizacion no encontrada" });
+    await ensureQuotationProcessingSchema();
+    await ensureQuotationWonDocumentsSchema();
+    const latestVersion = await withTransaction(async (conn) => {
+      const version = await lockQuotationClosure(conn, Number(quotation.latest_version_id), { allowAccepted: true });
+      if (version.status_code !== "aceptada") {
+        throw Object.assign(new Error("La cotizacion aun no esta aceptada."), { status: 409 });
+      }
+      const [existing] = await conn.query(
+        `SELECT id, status_code, owner_user_id, target_date, blocked_reason, notes,
+                completed_at, stage_data_json FROM quotation_processing_stages
+         WHERE quotation_id = ? AND stage_code = 'quotation_accepted' FOR UPDATE`,
+        [quotationId],
+      );
+      if (existing[0]?.status_code === "completed") return version;
+      const [snapshots] = await conn.query(
+        `SELECT accepted_at FROM quotation_won_documents
+         WHERE quotation_version_id = ? AND accepted_at IS NOT NULL ORDER BY accepted_at, id LIMIT 1`,
+        [version.id],
+      );
+      const acceptedAt = snapshots[0]?.accepted_at ||
+        safeParseJsonObject(existing[0]?.stage_data_json)?.acceptedAt ||
+        existing[0]?.completed_at || version.updated_at;
+      if (!acceptedAt) throw Object.assign(new Error("No se encontro la fecha original de aceptacion."), { status: 409 });
+      await upsertQuotationProcessingStage({
+        quotation, latestVersion: version, stageCode: "quotation_accepted",
+        userId: req.user.id, status: "completed", completedAt: acceptedAt,
+        ownerUserId: existing[0]?.owner_user_id, targetDate: existing[0]?.target_date,
+        blockedReason: existing[0]?.blocked_reason, notes: existing[0]?.notes,
+        stageData: { acceptedAt: new Date(acceptedAt).toISOString() }, connection: conn,
+      });
+      return version;
+    });
+    await logAuditEvent({
+      req, module: "cotizaciones", action: "quotation_acceptance_record_completed",
+      entityType: "quotation", entityId: quotationId,
+      detail: "Registro operativo de aceptacion completado sin repetir la aceptacion",
+    });
+    const stages = await listQuotationProcessingStages({ quotation, latestVersion });
+    res.json({ message: "Registro de aceptacion completado", stages });
+  },
+);
+
 router.patch(
   "/quotations/:quotationId/processing/stages/:stageCode",
   requireAnyPermission(acceptOrderAccessPermissionCodes),
@@ -13389,7 +13456,8 @@ router.patch(
     }
 
     try {
-      await upsertQuotationProcessingStage({
+      await ensureQuotationProcessingSchema();
+      const updateStage = (connection = null) => upsertQuotationProcessingStage({
         quotation,
         latestVersion,
         stageCode,
@@ -13401,7 +13469,16 @@ router.patch(
         blockedReason: parsed.data.blockedReason,
         notes: parsed.data.notes,
         stageData: parsed.data.stageData,
+        connection,
       });
+      if (stageCode === "quotation_accepted") {
+        await withTransaction(async (conn) => {
+          await lockQuotationClosure(conn, Number(latestVersion.id));
+          await updateStage(conn);
+        });
+      } else {
+        await updateStage();
+      }
     } catch (error) {
       return res.status(Number(error?.status || 500)).json({
         message:
@@ -17666,29 +17743,40 @@ router.get(
 );
 
 router.post(
-  "/quotation-versions/:versionId/won-documents/purchase-orders",
+  [
+    "/quotation-versions/:versionId/won-documents/purchase-orders",
+    "/quotation-versions/:versionId/won-documents/provider-quotes",
+  ],
   requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
+    const isProviderQuote = req.path.endsWith("/provider-quotes");
+    const role = isProviderQuote ? "provider_quote" : "purchase_order";
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
-      return res.status(403).json({ message: "No autorizado para registrar ordenes de compra" });
+      return res.status(403).json({ message: isProviderQuote
+        ? "No autorizado para registrar cotizaciones de proveedores"
+        : "No autorizado para registrar ordenes de compra" });
     }
     const versionId = Number(req.params.versionId);
     const parsed = z.object({
-      source: z.enum(quotationWonDocumentSourceCodes),
+      source: isProviderQuote ? z.literal("quotation") : z.enum(quotationWonDocumentSourceCodes),
       documentId: z.number().int().positive(),
     }).safeParse(req.body);
     if (!Number.isSafeInteger(versionId) || versionId <= 0 || !parsed.success) {
-      return res.status(400).json({ message: "Referencia de orden de compra invalida" });
+      return res.status(400).json({ message: isProviderQuote
+        ? "Referencia de cotizacion de proveedor invalida"
+        : "Referencia de orden de compra invalida" });
     }
     const { source, documentId } = parsed.data;
     const version = await getAccessibleQuotationVersion({ user: req.user, versionId });
     if (!version) return res.status(404).json({ message: "Version no encontrada" });
     if (Number(version.id) !== Number(version.latest_version_id) || !acceptOrderStatusCodes.has(version.status_code)) {
-      return res.status(400).json({ message: "Solo se pueden registrar ordenes en la version actual ganada o aceptada" });
+      return res.status(400).json({ message: isProviderQuote
+        ? "Solo se pueden registrar cotizaciones de proveedores en la version actual ganada o aceptada"
+        : "Solo se pueden registrar ordenes en la version actual ganada o aceptada" });
     }
     await ensureQuotationWonDocumentsSchema();
     const outcome = await withTransaction(async (conn) => {
-      await conn.query("SELECT id FROM quotation_versions WHERE id = ? FOR UPDATE", [versionId]);
+      await lockQuotationClosure(conn, versionId);
       const [documents] = await conn.query(
         source === "quotation"
           ? `SELECT d.id FROM documents d
@@ -17703,7 +17791,7 @@ router.post(
       if (!documents.length) return "missing";
       const [existing] = await conn.query(
         `SELECT id FROM quotation_won_documents
-         WHERE quotation_version_id = ? AND document_id = ? AND document_role = 'purchase_order' FOR UPDATE`,
+         WHERE quotation_version_id = ? AND document_id = ? AND document_role = '${role}' FOR UPDATE`,
         [versionId, documentId],
       );
       if (existing.length) return "duplicate";
@@ -17716,18 +17804,22 @@ router.post(
         `INSERT INTO quotation_won_documents
          (quotation_id, quotation_version_id, opportunity_id, document_id, document_source,
           document_role, created_by_user_id, accepted_at, accepted_by_user_id)
-         VALUES (?, ?, ?, ?, ?, 'purchase_order', ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, '${role}', ?, ?, ?)`,
         [Number(version.quotation_id), versionId, Number(version.opportunity_id), documentId,
           source, Number(req.user.id), accepted[0]?.accepted_at ?? null, accepted[0]?.accepted_by_user_id ?? null],
       );
       return "created";
     });
     if (outcome === "missing") return res.status(404).json({ message: "Documento no disponible en la cotizacion u oportunidad" });
-    if (outcome === "duplicate") return res.status(409).json({ message: "El archivo ya esta registrado como orden de compra" });
+    if (outcome === "duplicate") return res.status(409).json({ message: isProviderQuote
+      ? "El archivo ya esta registrado como cotizacion de proveedor"
+      : "El archivo ya esta registrado como orden de compra" });
     await logAuditEvent({
-      req, module: "cotizaciones", action: "purchase_order_added",
+      req, module: "cotizaciones", action: isProviderQuote ? "provider_quote_added" : "purchase_order_added",
       entityType: "quotation_version", entityId: versionId,
-      detail: "Orden de compra agregada al cierre desde procesamiento",
+      detail: isProviderQuote
+        ? "Cotizacion de proveedor agregada al cierre desde procesamiento"
+        : "Orden de compra agregada al cierre desde procesamiento",
       after: { documentId, source },
     });
     const [quotationDocuments, opportunityDocuments, savedSelectionRows] = await Promise.all([
@@ -17740,11 +17832,17 @@ router.post(
 );
 
 router.delete(
-  "/quotation-versions/:versionId/won-documents/:source/:documentId",
+  [
+    "/quotation-versions/:versionId/won-documents/:source/:documentId",
+    "/quotation-versions/:versionId/won-documents/provider-quotes/:source/:documentId",
+  ],
   requireAnyPermission(acceptOrderAccessPermissionCodes),
   async (req, res) => {
+    const isProviderQuote = req.path.includes("/won-documents/provider-quotes/");
+    const role = isProviderQuote ? "provider_quote" : "purchase_order";
+    const label = isProviderQuote ? "cotizacion de proveedor" : "orden de compra";
     if (!hasQuotationProcessingUpdatePermission(req.user)) {
-      return res.status(403).json({ message: "No autorizado para quitar la orden de compra" });
+      return res.status(403).json({ message: `No autorizado para quitar la ${label}` });
     }
     const versionId = Number(req.params.versionId);
     const documentId = Number(req.params.documentId);
@@ -17752,35 +17850,38 @@ router.delete(
     if (!Number.isSafeInteger(versionId) || versionId <= 0 ||
         !Number.isSafeInteger(documentId) || documentId <= 0 ||
         !quotationWonDocumentSourceCodes.includes(source)) {
-      return res.status(400).json({ message: "Referencia de orden de compra invalida" });
+      return res.status(400).json({ message: `Referencia de ${label} invalida` });
     }
     const version = await getAccessibleQuotationVersion({ user: req.user, versionId });
     if (!version) return res.status(404).json({ message: "Version no encontrada" });
     if (Number(version.id) !== Number(version.latest_version_id) || !acceptOrderStatusCodes.has(version.status_code)) {
-      return res.status(400).json({ message: "Solo se puede quitar la orden en la version actual ganada o aceptada" });
+      return res.status(400).json({ message: `Solo se puede quitar la ${label} en la version actual ganada o aceptada` });
     }
     await ensureQuotationWonDocumentsSchema();
     const removed = await withTransaction(async (conn) => {
+      await lockQuotationClosure(conn, versionId);
       const [rows] = await conn.query(
         `SELECT qwd.id, qwd.purchase_order_amount, qwd.purchase_order_currency
          FROM quotation_won_documents qwd
          WHERE qwd.quotation_version_id = ? AND qwd.document_id = ? AND qwd.document_source = ?
-           AND qwd.document_role = 'purchase_order' FOR UPDATE`,
+           AND qwd.document_role = '${role}' FOR UPDATE`,
         [versionId, documentId, source],
       );
       if (!rows.length) return null;
       await conn.query("DELETE FROM quotation_won_documents WHERE id = ?", [rows[0].id]);
       return rows[0];
     });
-    if (!removed) return res.status(404).json({ message: "Orden de compra no encontrada" });
+    if (!removed) return res.status(404).json({ message: isProviderQuote ? "Cotizacion de proveedor no encontrada" : "Orden de compra no encontrada" });
     await logAuditEvent({
-      req, module: "cotizaciones", action: "purchase_order_removed",
+      req, module: "cotizaciones", action: isProviderQuote ? "provider_quote_removed" : "purchase_order_removed",
       entityType: "quotation_version", entityId: versionId,
-      detail: "Orden de compra retirada del cierre; archivo original conservado",
+      detail: isProviderQuote
+        ? "Cotizacion de proveedor retirada del cierre; archivo original conservado"
+        : "Orden de compra retirada del cierre; archivo original conservado",
       before: { documentId, source, amount: removed.purchase_order_amount, currencyCode: removed.purchase_order_currency },
-      after: { purchaseOrder: null },
+      after: isProviderQuote ? { providerQuote: null } : { purchaseOrder: null },
     });
-    res.json({ message: "Orden de compra retirada del cierre" });
+    res.json({ message: isProviderQuote ? "Cotizacion de proveedor retirada del cierre" : "Orden de compra retirada del cierre" });
   },
 );
 
@@ -17812,6 +17913,7 @@ router.patch(
     if (!currencies.length) return res.status(400).json({ message: "Moneda no disponible" });
     await ensureQuotationWonDocumentsSchema();
     const saved = await withTransaction(async (conn) => {
+      await lockQuotationClosure(conn, versionId);
       const [rows] = await conn.query(
         `SELECT qwd.id, qwd.purchase_order_amount, qwd.purchase_order_currency
          FROM quotation_won_documents qwd INNER JOIN documents d ON d.id = qwd.document_id
@@ -22218,18 +22320,46 @@ router.post(
     }
 
     const now = new Date();
-    await query(
-      `UPDATE quotation_versions
-       SET status_id = ?, updated_at = ?, updated_by_user_id = ?
-       WHERE id = ?`,
-      [Number(targetStatus.id), now, Number(req.user.id), versionId],
-    );
-    await query(
-      `UPDATE quotations
-       SET updated_at = ?, updated_by_user_id = ?
-       WHERE id = ?`,
-      [now, Number(req.user.id), Number(version.quotation_id)],
-    );
+    const updateStatus = async (execute) => {
+      await execute(
+        `UPDATE quotation_versions
+         SET status_id = ?, updated_at = ?, updated_by_user_id = ?
+         WHERE id = ?`,
+        [Number(targetStatus.id), now, Number(req.user.id), versionId],
+      );
+      await execute(
+        `UPDATE quotations
+         SET updated_at = ?, updated_by_user_id = ?
+         WHERE id = ?`,
+        [now, Number(req.user.id), Number(version.quotation_id)],
+      );
+    };
+    if (isAcceptOrderAction) {
+      await ensureQuotationProcessingSchema();
+      await withTransaction(async (conn) => {
+        await lockQuotationClosure(conn, versionId);
+        const [stages] = await conn.query(
+          `SELECT stage_data_json, completed_at FROM quotation_processing_stages
+           WHERE quotation_id = ? AND stage_code = 'quotation_accepted' FOR UPDATE`,
+          [Number(version.quotation_id)],
+        );
+        const acceptedAt = safeParseJsonObject(stages[0]?.stage_data_json)?.acceptedAt ||
+          stages[0]?.completed_at || now;
+        await conn.query(
+          `INSERT INTO quotation_processing_stages
+           (quotation_id, quotation_version_id, opportunity_id, stage_code, stage_data_json, last_updated_by_user_id)
+           VALUES (?, ?, ?, 'quotation_accepted', ?, ?)
+           ON DUPLICATE KEY UPDATE stage_data_json = VALUES(stage_data_json),
+             quotation_version_id = VALUES(quotation_version_id)`,
+          [Number(version.quotation_id), versionId, Number(version.opportunity_id),
+            JSON.stringify({ ...safeParseJsonObject(stages[0]?.stage_data_json), acceptedAt: new Date(acceptedAt).toISOString() }),
+            Number(req.user.id)],
+        );
+        await updateStatus((sql, params) => conn.query(sql, params));
+      });
+    } else {
+      await updateStatus(query);
+    }
 
     await logAuditEvent({
       req,
@@ -22292,6 +22422,7 @@ router.post(
           : "Estado actualizado",
       statusCode: targetStatus.code,
       statusName: targetStatus.name,
+      acceptedAt: isAcceptOrderAction ? now : undefined,
       validation:
         actionCode === "aprobar"
           ? {

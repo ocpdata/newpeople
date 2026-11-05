@@ -7,6 +7,7 @@ vi.mock("../src/db.js", () => ({
   withTransaction: vi.fn(),
 }));
 vi.mock("../src/audit.js", () => ({ logAuditEvent: vi.fn() }));
+vi.mock("../src/quotation-closure-lock.js", () => ({ lockQuotationClosure: vi.fn() }));
 import { query, withTransaction } from "../src/db.js";
 import { logAuditEvent } from "../src/audit.js";
 import router from "../src/routes.quotations.js";
@@ -14,6 +15,7 @@ import { purchaseOrderValueSchema } from "../src/purchase-order-value.js";
 
 const endpoint = "/api/quotation-versions/10/won-documents/quotation/20/value";
 const removalEndpoint = "/api/quotation-versions/10/won-documents/quotation/20";
+const providerRemovalEndpoint = "/api/quotation-versions/10/won-documents/provider-quotes/quotation/20";
 function app(permissions = ["aceptar_pedido.procesamiento.update"]) {
   const instance = express();
   instance.use(express.json());
@@ -128,6 +130,44 @@ describe("Purchase order value", () => {
     expect((await request(app(["aceptar_pedido.procesamiento.read"])).delete(removalEndpoint)).status).toBe(403);
     expect(withTransaction).not.toHaveBeenCalled();
   });
+  it.each(["quotation", "opportunity"])("removes only the selected %s provider association and audits without deleting files", async (source) => {
+    const transactionQuery = vi.fn(async (sql) => sql.includes("SELECT qwd.id")
+      ? [[{ id: 30, purchase_order_amount: null, purchase_order_currency: null }]]
+      : [{ affectedRows: 1 }]);
+    withTransaction.mockImplementation(async (work) => work({ query: transactionQuery }));
+    const response = await request(app()).delete(providerRemovalEndpoint.replace("/quotation/20", `/${source}/20`));
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(transactionQuery).toHaveBeenCalledTimes(2);
+    expect(transactionQuery.mock.calls[0][0]).toContain("qwd.document_role = 'provider_quote' FOR UPDATE");
+    expect(transactionQuery.mock.calls[0][1]).toEqual([10, 20, source]);
+    expect(transactionQuery.mock.calls[1]).toEqual(["DELETE FROM quotation_won_documents WHERE id = ?", [30]]);
+    expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "provider_quote_removed", after: { providerQuote: null },
+    }));
+  });
+  it("enforces provider removal permissions, references and current closed version", async () => {
+    expect((await request(app(["aceptar_pedido.procesamiento.read"])).delete(providerRemovalEndpoint)).status).toBe(403);
+    expect((await request(app()).delete(providerRemovalEndpoint.replace("/quotation/20", "/invalid/20"))).status).toBe(400);
+    expect((await request(app()).delete(providerRemovalEndpoint.replace("/quotation/20", "/quotation/0"))).status).toBe(400);
+    query.mockResolvedValue([]);
+    expect((await request(app()).delete(providerRemovalEndpoint)).status).toBe(404);
+    for (const version of [
+      { id: 10, latest_version_id: 11, status_code: "aceptada" },
+      { id: 10, latest_version_id: 10, status_code: "borrador" },
+    ]) {
+      query.mockResolvedValue([version]);
+      expect((await request(app()).delete(providerRemovalEndpoint)).status).toBe(400);
+    }
+    expect(withTransaction).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+  it("does not delete or audit when the provider association is missing", async () => {
+    const transactionQuery = vi.fn(async () => [[]]);
+    withTransaction.mockImplementation(async (work) => work({ query: transactionQuery }));
+    expect((await request(app()).delete(providerRemovalEndpoint)).status).toBe(404);
+    expect(transactionQuery).toHaveBeenCalledTimes(1);
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
   it("rejects invalid removal references", async () => {
     expect((await request(app()).delete(removalEndpoint.replace("/quotation/20", "/invalid/20"))).status).toBe(400);
     expect((await request(app()).delete(removalEndpoint.replace("/quotation/20", "/quotation/0"))).status).toBe(400);
@@ -170,7 +210,11 @@ describe("Purchase order value", () => {
     ]);
     expect(response.body.savedSelections.purchaseOrder.documentId).toBe(20);
   });
-  it.each(["quotation", "opportunity"])("appends a %s order without replacing existing orders or values", async (source) => {
+  it.each([
+    ["purchase-orders", "purchase_order", "quotation"],
+    ["purchase-orders", "purchase_order", "opportunity"],
+    ["provider-quotes", "provider_quote", "quotation"],
+  ])("appends %s from %s / %s without replacing existing documents or values", async (path, role, source) => {
     query.mockImplementation(async (sql) => {
       if (sql.includes("WHERE qv.id = ?")) return [{
         id: 10, quotation_id: 1, opportunity_id: 2, latest_version_id: 10, status_code: "aceptada",
@@ -184,19 +228,24 @@ describe("Purchase order value", () => {
       return [[]];
     });
     withTransaction.mockImplementation(async (work) => work({ query: transactionQuery }));
-    const response = await request(app()).post("/api/quotation-versions/10/won-documents/purchase-orders")
+    const response = await request(app()).post(`/api/quotation-versions/10/won-documents/${path}`)
       .send({ source, documentId: 21 });
     expect(response.status, JSON.stringify(response.body)).toBe(200);
     const writes = transactionQuery.mock.calls.filter(([sql]) => /INSERT|UPDATE|DELETE/.test(sql) && !sql.includes("SELECT"));
     expect(writes).toHaveLength(1);
     expect(writes[0][0]).toContain("INSERT INTO quotation_won_documents");
+    expect(writes[0][0]).toContain(`'${role}'`);
     expect(writes[0][1]).toEqual([1, 10, 2, 21, source, 1, "2026-11-03", 7]);
     expect(writes[0][0]).not.toContain("purchase_order_amount");
-    expect(transactionQuery.mock.calls[1][1]).toEqual([21, source === "quotation" ? 1 : 2]);
-    expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "purchase_order_added" }));
+    expect(transactionQuery.mock.calls[0][1]).toEqual([21, source === "quotation" ? 1 : 2]);
+    expect(transactionQuery.mock.calls[1][0]).toContain(`document_role = '${role}' FOR UPDATE`);
+    expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: role === "provider_quote" ? "provider_quote_added" : "purchase_order_added",
+      after: { documentId: 21, source },
+    }));
   });
-  it("does not append missing files or duplicate orders", async () => {
-    const post = () => request(app()).post("/api/quotation-versions/10/won-documents/purchase-orders")
+  it.each(["purchase-orders", "provider-quotes"])("does not append missing files or duplicates for %s", async (path) => {
+    const post = () => request(app()).post(`/api/quotation-versions/10/won-documents/${path}`)
       .send({ source: "quotation", documentId: 20 });
     const transactionQuery = vi.fn(async () => [[]]);
     withTransaction.mockImplementation(async (work) => work({ query: transactionQuery }));
@@ -207,8 +256,8 @@ describe("Purchase order value", () => {
     expect(transactionQuery.mock.calls.some(([sql]) => sql.includes("INSERT INTO"))).toBe(false);
     expect(logAuditEvent).not.toHaveBeenCalled();
   });
-  it("enforces append permissions, references and current closed version", async () => {
-    const path = "/api/quotation-versions/10/won-documents/purchase-orders";
+  it.each(["purchase-orders", "provider-quotes"])("enforces append permissions, references and current closed version for %s", async (type) => {
+    const path = `/api/quotation-versions/10/won-documents/${type}`;
     const body = { source: "quotation", documentId: 20 };
     expect((await request(app(["aceptar_pedido.procesamiento.read"])).post(path).send(body)).status).toBe(403);
     expect((await request(app()).post(path).send({ ...body, source: "invalid" })).status).toBe(400);
@@ -223,6 +272,40 @@ describe("Purchase order value", () => {
       expect((await request(app()).post(path).send(body)).status).toBe(400);
     }
     expect(withTransaction).not.toHaveBeenCalled();
+  });
+  it("only allows quotation sources for provider quotes", async () => {
+    const response = await request(app()).post("/api/quotation-versions/10/won-documents/provider-quotes")
+      .send({ source: "opportunity", documentId: 20 });
+    expect(response.status).toBe(400);
+    expect(withTransaction).not.toHaveBeenCalled();
+    expect(logAuditEvent).not.toHaveBeenCalled();
+  });
+  it("registers provider documents from any version of the same won quotation and returns all selections", async () => {
+    query.mockImplementation(async (sql) => {
+      if (sql.includes("WHERE qv.id = ?")) return [{
+        id: 10, quotation_id: 1, opportunity_id: 2, latest_version_id: 10, status_code: "ganada",
+      }];
+      if (sql.includes("SELECT qwd.document_id")) return [
+        { document_id: 20, document_source: "quotation", document_role: "purchase_order", purchase_order_amount: "250", purchase_order_currency: "MXN" },
+        { document_id: 21, document_source: "quotation", document_role: "provider_quote", original_file_name: "proveedor.pdf" },
+      ];
+      return [];
+    });
+    const transactionQuery = vi.fn(async (sql) => sql.includes("SELECT d.id") ? [[{ id: 21 }]] : [[]]);
+    withTransaction.mockImplementation(async (work) => work({ query: transactionQuery }));
+    const response = await request(app()).post("/api/quotation-versions/10/won-documents/provider-quotes")
+      .send({ source: "quotation", documentId: 21 });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const fileRead = transactionQuery.mock.calls[0];
+    expect(fileRead[0]).toContain("qv.quotation_id = ?");
+    expect(fileRead[0]).toContain("COALESCE(d.is_deleted, 0) = 0");
+    expect(fileRead[1]).toEqual([21, 1]);
+    expect(response.body.savedSelections.purchaseOrders).toMatchObject([
+      { documentId: 20, amount: 250, currencyCode: "MXN" },
+    ]);
+    expect(response.body.savedSelections.providerQuotes).toMatchObject([
+      { documentId: 21, originalFileName: "proveedor.pdf" },
+    ]);
   });
   it("preserves additional processing orders and their values when the single-order editor saves", async () => {
     query.mockImplementation(async (sql) => {

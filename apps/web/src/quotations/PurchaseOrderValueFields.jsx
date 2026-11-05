@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
 
-export default function PurchaseOrderValueFields({ order, versionId, canUpdate, onRemoved }) {
+export default function PurchaseOrderValueFields({ order, versionId, canUpdate, onRemoved, onBusyChange }) {
   const [amount, setAmount] = useState(order.amount == null ? "" : String(order.amount));
   const [currency, setCurrency] = useState(order.currencyCode || "");
   const [currencies, setCurrencies] = useState([]);
@@ -30,6 +30,7 @@ export default function PurchaseOrderValueFields({ order, versionId, canUpdate, 
       return;
     }
     setSaving(true);
+    onBusyChange?.(true);
     try {
       const { data } = await api.patch(
         `/api/quotation-versions/${versionId}/won-documents/${order.source}/${order.documentId}/value`,
@@ -42,12 +43,14 @@ export default function PurchaseOrderValueFields({ order, versionId, canUpdate, 
       setError(getApiErrorMessage(saveError, "No fue posible guardar el valor de la orden de compra"));
     } finally {
       setSaving(false);
+      onBusyChange?.(false);
     }
   }
 
   async function remove() {
     if (!window.confirm("¿Quitar la orden de compra del cierre y borrar su valor y moneda? El archivo original se conservará en la cotización u oportunidad.")) return;
     setSaving(true);
+    onBusyChange?.(true);
     setError("");
     setSuccess("");
     try {
@@ -57,6 +60,7 @@ export default function PurchaseOrderValueFields({ order, versionId, canUpdate, 
       setError(getApiErrorMessage(removeError, "No fue posible quitar la orden de compra"));
     } finally {
       setSaving(false);
+      onBusyChange?.(false);
     }
   }
 

@@ -16401,6 +16401,8 @@ td {
   background: linear-gradient(180deg, #f8fbff 0%, #fff 100%);
   padding: 12px;
   display: grid;
+  align-content: start;
+  min-width: 0;
   gap: 10px;
 }
 
@@ -16482,6 +16484,7 @@ td {
   padding: 12px;
   background: #eef4fa;
   border-radius: 8px;
+  align-content: start;
   gap: 6px;
 }
 
@@ -16544,6 +16547,10 @@ td {
   background: transparent;
   border-color: transparent;
   color: #a52c35;
+}
+
+.purchase-order-value-actions.provider-quote-actions {
+  justify-content: flex-end;
 }
 
 .purchase-order-value-actions .purchase-order-remove-btn:hover:not(:disabled) {

@@ -6,7 +6,8 @@ import { api, getApiErrorMessage } from "./api";
 import { getTodayBusinessDate, toBusinessDateIso } from "./business-timezone";
 import QuotationStatusIcon from "./quotations/QuotationStatusIcon";
 import PurchaseOrderValueFields from "./quotations/PurchaseOrderValueFields";
-import PurchaseOrderDocumentPicker from "./quotations/PurchaseOrderDocumentPicker";
+import ClosingDocumentPicker from "./quotations/ClosingDocumentPicker";
+import ProviderQuoteRemoveButton from "./quotations/ProviderQuoteRemoveButton";
 import PurchaseOrderPrintPreviewModal from "./quotations/PurchaseOrderPrintPreviewModal";
 import { buildPurchaseOrderPrintModel } from "./quotations/buildPurchaseOrderPrintModel";
 import { getQuotationStatusTone } from "./quotations/quotationStatusPresentation";
@@ -867,6 +868,8 @@ export default function AcceptOrderPage() {
   const [processingSavingStageCode, setProcessingSavingStageCode] =
     useState("");
   const [processingDirty, setProcessingDirty] = useState(false);
+  const [processingDocumentOperations, setProcessingDocumentOperations] = useState(0);
+  const [processingAccepting, setProcessingAccepting] = useState(false);
   const [kickoffInvitationModalOpen, setKickoffInvitationModalOpen] =
     useState(false);
   const [kickoffInvitationDraft, setKickoffInvitationDraft] = useState(() =>
@@ -1355,6 +1358,10 @@ export default function AcceptOrderPage() {
           ? { ...current, ...acceptedPatch }
           : current,
       );
+      setProcessingData((current) => ({
+        ...current,
+        quotation: { ...current.quotation, statusCode: "aceptada" },
+      }));
       return true;
     } catch (acceptError) {
       setError(
@@ -1367,6 +1374,10 @@ export default function AcceptOrderPage() {
   }
 
   async function sendSellerNotification() {
+    if (isAcceptedQuotation(quotationToNotify)) {
+      setError("La cotización ya está aceptada. No se puede enviar correo al vendedor.");
+      return;
+    }
     const quotationId = Number(quotationToNotify?.id || 0);
     const note = sellerNotificationNote.trim();
     if (!quotationId || !note) {
@@ -1486,6 +1497,10 @@ export default function AcceptOrderPage() {
   }
 
   function closeProcessingModal() {
+    if (processingClosureBusy || processingDocumentOperations > 0) {
+      setError("Espera a que termine la operación en curso antes de cerrar el procesamiento.");
+      return;
+    }
     if (
       processingDirty &&
       !window.confirm(
@@ -2049,6 +2064,27 @@ export default function AcceptOrderPage() {
     setProcessingDirty(true);
   }
 
+  function handleProcessingDocumentBusyChange(busy) {
+    setProcessingDocumentOperations((count) => count + (busy ? 1 : -1));
+  }
+
+  async function completeAcceptanceRecord() {
+    setProcessingSavingStageCode("quotation_accepted");
+    setError("");
+    try {
+      const { data } = await api.post(
+        `/api/quotations/${quotationToProcess.id}/processing/complete-acceptance`,
+      );
+      setProcessingData((current) => ({ ...current, stages: data.stages }));
+      setProcessingDirty(false);
+      setSuccess("Cotización aceptada y registro operativo completado.");
+    } catch (saveError) {
+      setError(`La cotización está aceptada, pero el registro operativo quedó pendiente. ${getApiErrorMessage(saveError, "No fue posible completar el registro.")} Usa Completar registro para reintentar.`);
+    } finally {
+      setProcessingSavingStageCode("");
+    }
+  }
+
   async function saveProcessingStage(stageCode, options = {}) {
     const quotationId = Number(quotationToProcess?.id || 0);
     const stage = (processingData.stages || []).find(
@@ -2089,10 +2125,12 @@ export default function AcceptOrderPage() {
       }));
       setSuccess(`Etapa ${stage.stageName || stageCode} guardada`);
       setProcessingDirty(false);
+      return true;
     } catch (saveError) {
       setError(
         getApiErrorMessage(saveError, "No fue posible guardar la etapa"),
       );
+      return false;
     } finally {
       setProcessingSavingStageCode("");
     }
@@ -4780,6 +4818,15 @@ export default function AcceptOrderPage() {
     null;
   const isQuotationAcceptedStage =
     activeProcessingStage?.stageCode === "quotation_accepted";
+  const isProcessingQuotationAccepted =
+    (processingData?.quotation?.statusCode || quotationToProcess?.latestStatusCode) === "aceptada";
+  const processingClosureBusy = processingAccepting || Boolean(acceptingVersionId) ||
+    processingSavingStageCode === "quotation_accepted" || Boolean(sendingNotificationQuotationId);
+  const canEditProcessingClosure = Boolean(processingData.permissions?.canUpdate) &&
+    !isProcessingQuotationAccepted && !processingClosureBusy;
+  const processingClosureReadOnlyReason = isProcessingQuotationAccepted
+    ? "Cotización aceptada. Documentos de cierre en solo consulta."
+    : processingClosureBusy ? "Operación en curso. Espera a que termine para modificar los documentos." : "";
   const isKickoffInternalStage =
     activeProcessingStage?.stageCode === "kickoff_internal";
   const isKickoffExternalStage =
@@ -5632,7 +5679,7 @@ export default function AcceptOrderPage() {
                       <h4>{activeProcessingStage.stageName}</h4>
                       <p>
                         {isQuotationAcceptedStage
-                          ? activeProcessingStage.status === "completed"
+                          ? isProcessingQuotationAccepted
                             ? "La cotizacion ya fue aceptada. Aqui puedes revisar la evidencia y los datos registrados."
                             : "La cotizacion aun no esta aceptada. Revisa la informacion y confirma esta etapa con el boton Aceptar."
                           : "Edita esta etapa de forma independiente. El flujo no requiere secuencia estricta."}
@@ -5641,10 +5688,20 @@ export default function AcceptOrderPage() {
 
                     {isQuotationAcceptedStage ? (
                       <div className="processing-accepted-scroll-area">
+                        {isProcessingQuotationAccepted && (
+                          <p className="field-hint" role="status">
+                            Cotización aceptada. No se permiten cambios en los documentos de cierre ni el envío de correo al vendedor.
+                          </p>
+                        )}
+                        {isProcessingQuotationAccepted && activeProcessingStage.acceptanceRecorded === false && (
+                          <p className="field-hint">
+                            El registro operativo de la aceptación está pendiente. Usa Completar registro para finalizarlo sin repetir la aceptación.
+                          </p>
+                        )}
                         <div className="processing-accepted-status-row">
                           <span
                             className={`processing-accepted-status-indicator${
-                              activeProcessingStage.status === "completed"
+                              isProcessingQuotationAccepted
                                 ? " is-completed"
                                 : ""
                             }`}
@@ -5653,12 +5710,12 @@ export default function AcceptOrderPage() {
                               className="processing-accepted-status-icon"
                               aria-hidden="true"
                             >
-                              {activeProcessingStage.status === "completed"
+                              {isProcessingQuotationAccepted
                                 ? "✓"
                                 : "○"}
                             </span>
                             <span>
-                              {activeProcessingStage.status === "completed"
+                              {isProcessingQuotationAccepted
                                 ? "Aceptada"
                                 : "Pendiente de aceptar"}
                             </span>
@@ -5830,12 +5887,16 @@ export default function AcceptOrderPage() {
                             <div className="accept-order-won-documents-grid">
                               <section className="accept-order-won-documents-section">
                                 <h5>Órdenes de compra ({processingWonDocuments.purchaseOrders.length})</h5>
-                                <PurchaseOrderDocumentPicker
+                                <ClosingDocumentPicker
+                                  role="purchase_order"
                                   versionId={quotationToProcess?.latestVersionId}
                                   quotationDocuments={processingWonDocuments.quotationDocuments}
                                   opportunityDocuments={processingWonDocuments.opportunityDocuments}
-                                  purchaseOrders={processingWonDocuments.purchaseOrders}
-                                  canUpdate={Boolean(processingData.permissions?.canUpdate)}
+                                  selections={processingWonDocuments.purchaseOrders}
+                                  excludedDocuments={processingWonDocuments.providerQuotes}
+                                  canUpdate={canEditProcessingClosure}
+                                  readOnlyReason={processingClosureReadOnlyReason}
+                                  onBusyChange={handleProcessingDocumentBusyChange}
                                   onSaved={(data) => setProcessingWonDocuments({
                                     loading: false, error: "",
                                     quotationDocuments: data.quotationDocuments || [],
@@ -5876,7 +5937,8 @@ export default function AcceptOrderPage() {
                                     <PurchaseOrderValueFields
                                       order={order}
                                       versionId={quotationToProcess?.latestVersionId}
-                                      canUpdate={Boolean(processingData.permissions?.canUpdate)}
+                                      canUpdate={canEditProcessingClosure}
+                                      onBusyChange={handleProcessingDocumentBusyChange}
                                       onRemoved={() => setProcessingWonDocuments((previous) => {
                                         const purchaseOrders = previous.purchaseOrders.filter((item) =>
                                           item.source !== order.source || item.documentId !== order.documentId);
@@ -5893,14 +5955,37 @@ export default function AcceptOrderPage() {
                               </section>
 
                               <section className="accept-order-won-documents-section">
-                                <h5>Cotizaciones de proveedores</h5>
+                                <h5>Cotizaciones de proveedores ({processingWonDocuments.providerQuotes.length})</h5>
+                                <ClosingDocumentPicker
+                                  role="provider_quote"
+                                  versionId={quotationToProcess?.latestVersionId}
+                                  quotationDocuments={processingWonDocuments.quotationDocuments}
+                                  selections={processingWonDocuments.providerQuotes}
+                                  excludedDocuments={processingWonDocuments.purchaseOrders}
+                                  canUpdate={canEditProcessingClosure}
+                                  readOnlyReason={processingClosureReadOnlyReason}
+                                  onBusyChange={handleProcessingDocumentBusyChange}
+                                  onSaved={(data) => setProcessingWonDocuments({
+                                    loading: false, error: "",
+                                    quotationDocuments: data.quotationDocuments || [],
+                                    opportunityDocuments: data.opportunityDocuments || [],
+                                    purchaseOrder: data.savedSelections.purchaseOrder,
+                                    purchaseOrders: data.savedSelections.purchaseOrders,
+                                    providerQuotes: data.savedSelections.providerQuotes,
+                                  })}
+                                />
                                 {processingWonDocuments.providerQuotes
                                   .length ? (
                                   <div className="accept-order-won-documents-list">
                                     {processingWonDocuments.providerQuotes.map(
                                       (item) => (
-                                        <article
+                                        <div
                                           key={`provider-quote-${item.source}-${item.documentId}`}
+                                          role="group"
+                                          aria-label={`Cotización de proveedor: ${item.originalFileName || "Documento"}`}
+                                          className="purchase-order-client-card"
+                                        >
+                                        <article
                                           className="accept-order-won-document-item"
                                         >
                                           <div className="accept-order-won-document-item-main">
@@ -5937,6 +6022,18 @@ export default function AcceptOrderPage() {
                                             </svg>
                                           </button>
                                         </article>
+                                        <ProviderQuoteRemoveButton
+                                          document={item}
+                                          versionId={quotationToProcess?.latestVersionId}
+                                          canUpdate={canEditProcessingClosure}
+                                          onBusyChange={handleProcessingDocumentBusyChange}
+                                          onRemoved={() => setProcessingWonDocuments((previous) => ({
+                                            ...previous,
+                                            providerQuotes: previous.providerQuotes.filter((document) =>
+                                              document.source !== item.source || document.documentId !== item.documentId),
+                                          }))}
+                                        />
+                                        </div>
                                       ),
                                     )}
                                   </div>
@@ -5974,7 +6071,7 @@ export default function AcceptOrderPage() {
                                     : null,
                                 )
                               }
-                              disabled={!processingData.permissions?.canUpdate}
+                              disabled={!canEditProcessingClosure}
                             />
                           </label>
 
@@ -5989,7 +6086,7 @@ export default function AcceptOrderPage() {
                                   event.target.value,
                                 )
                               }
-                              disabled={!processingData.permissions?.canUpdate}
+                              disabled={!canEditProcessingClosure}
                             />
                           </label>
                         </div>
@@ -6130,7 +6227,7 @@ export default function AcceptOrderPage() {
                           onClick={() =>
                             openSellerNotificationModal(quotationToProcess)
                           }
-                          disabled={Boolean(sendingNotificationQuotationId)}
+                          disabled={isProcessingQuotationAccepted || processingClosureBusy || processingDocumentOperations > 0}
                         >
                           Correo vendedor
                         </button>
@@ -6140,30 +6237,18 @@ export default function AcceptOrderPage() {
                         className="btn-primary"
                         onClick={() => {
                           if (isQuotationAcceptedStage) {
+                            if (isProcessingQuotationAccepted || processingClosureBusy || processingDocumentOperations > 0) return;
                             void (async () => {
-                              const acceptedAtIso =
-                                activeProcessingStage.stageData?.acceptedAt ||
-                                activeProcessingStage.completedAt ||
-                                new Date().toISOString();
-                              const quotationAccepted =
-                                isAcceptedQuotation(quotationToProcess) ||
-                                (await acceptQuotationFromProcessing(
-                                  quotationToProcess,
-                                ));
-                              if (!quotationAccepted) {
-                                return;
+                              setProcessingAccepting(true);
+                              try {
+                                const draftSaved = await saveProcessingStage(activeProcessingStage.stageCode, { forceStatus: "not_started" });
+                                if (!draftSaved) return;
+                                const accepted = await acceptQuotationFromProcessing(quotationToProcess);
+                                if (!accepted) return;
+                                await completeAcceptanceRecord();
+                              } finally {
+                                setProcessingAccepting(false);
                               }
-
-                              await saveProcessingStage(
-                                activeProcessingStage.stageCode,
-                                {
-                                  forceStatus: "completed",
-                                  forceCompletedAt: acceptedAtIso,
-                                  stageDataPatch: {
-                                    acceptedAt: acceptedAtIso,
-                                  },
-                                },
-                              );
                             })();
                             return;
                           }
@@ -6173,18 +6258,29 @@ export default function AcceptOrderPage() {
                         }}
                         disabled={
                           !processingData.permissions?.canUpdate ||
+                          (isQuotationAcceptedStage && (isProcessingQuotationAccepted || processingClosureBusy || processingDocumentOperations > 0)) ||
                           Boolean(acceptingVersionId) ||
                           processingSavingStageCode ===
                             activeProcessingStage.stageCode
                         }
                       >
-                        {processingSavingStageCode ===
+                        {isQuotationAcceptedStage && isProcessingQuotationAccepted
+                          ? "Aceptada"
+                          : processingSavingStageCode ===
                         activeProcessingStage.stageCode
                           ? "Guardando..."
                           : isQuotationAcceptedStage
-                            ? "Aceptar"
+                            ? processingAccepting ? "Aceptando..." : "Aceptar"
                             : "Guardar etapa"}
                       </button>
+                      {isQuotationAcceptedStage && isProcessingQuotationAccepted &&
+                        activeProcessingStage.acceptanceRecorded === false && (
+                        <button type="button" className="btn-secondary"
+                          disabled={!processingData.permissions?.canUpdate || processingClosureBusy}
+                          onClick={() => void completeAcceptanceRecord()}>
+                          {processingSavingStageCode === "quotation_accepted" ? "Completando..." : "Completar registro"}
+                        </button>
+                      )}
                     </div>
                   </section>
                 ) : null}
