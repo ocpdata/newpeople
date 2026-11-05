@@ -4,7 +4,7 @@ async function openProcessing(page, {
   selected = true, canUpdate = true, failRegistration = false, failRemoval = false,
   failProviderRegistration = false, failProviderRemoval = false,
   accepted = false, acceptanceRecorded = accepted, failAcceptance = false,
-  completionFailures = 0, staleList = false,
+  completionFailures = 0, staleList = false, canCorrectAcceptance = false,
   kickoffUsers = [], allUsers = kickoffUsers, previousKickoffAttendees = null,
 } = {}) {
   let quotationStatus = accepted ? "aceptada" : "ganada";
@@ -13,6 +13,9 @@ async function openProcessing(page, {
   const completions = [];
   const stageRequests = [];
   const invitations = [];
+  const corrections = [];
+  const correctionHeaders = [];
+  let acceptanceData = {};
   const latestInvitation = previousKickoffAttendees ? {
     id: 1, inviteSubject: "Convocatoria anterior", inviteBodyTemplate: "Mensaje anterior",
     internalAttendeesUserIds: previousKickoffAttendees, statusCode: "draft",
@@ -21,7 +24,7 @@ async function openProcessing(page, {
   const stages = () => [
     { stageCode: "quotation_accepted", stageName: "Cotización aceptada",
       status: quotationStatus === "aceptada" ? "completed" : "not_started",
-      acceptanceRecorded: recorded, stageData: {} },
+      acceptanceRecorded: recorded, stageData: acceptanceData },
     { stageCode: "kickoff_internal", stageName: "Kick Off interno", status: "not_started", stageData: {} },
   ];
   let value = { amount: null, currencyCode: null };
@@ -57,6 +60,9 @@ async function openProcessing(page, {
   await page.addInitScript(() => window.localStorage.setItem("crm_token", "order-test"));
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
+    if (route.request().headers()["x-acceptance-correction-reason"]) {
+      correctionHeaders.push({ path: url.pathname, reason: decodeURIComponent(route.request().headers()["x-acceptance-correction-reason"]) });
+    }
     if (url.pathname === "/api/auth/bootstrap-status") return route.fulfill({ json: { hasUsers: true } });
     if (url.pathname === "/api/auth/me") return route.fulfill({
       json: { id: 501, full_name: "Usuario", permissions: [canUpdate ? "aceptar_pedido.procesamiento.update" : "aceptar_pedido.procesamiento.read"] },
@@ -68,7 +74,7 @@ async function openProcessing(page, {
       latestCurrencyCode: "USD", activationStatusCode: "activada",
     }] });
     if (url.pathname === "/api/quotations/1/processing") return route.fulfill({
-      json: { quotation: { statusCode: quotationStatus }, permissions: { canUpdate, canConvoke: canUpdate },
+      json: { quotation: { statusCode: quotationStatus }, permissions: { canUpdate, canConvoke: canUpdate, canCorrectAcceptance },
         assignableUsers: allUsers,
         kickoffInternal: { assignableUsers: kickoffUsers, latestInvitation, invitations: latestInvitation ? [latestInvitation] : [] },
         stages: stages() },
@@ -85,6 +91,12 @@ async function openProcessing(page, {
     }
     if (url.pathname === "/api/quotations/1/processing/stages/quotation_accepted") {
       stageRequests.push(route.request().postDataJSON());
+      return route.fulfill({ json: { stages: stages() } });
+    }
+    if (url.pathname === "/api/quotations/1/processing/acceptance-correction") {
+      const body = route.request().postDataJSON();
+      corrections.push(body);
+      acceptanceData = { acceptedAt: body.acceptedAt };
       return route.fulfill({ json: { stages: stages() } });
     }
     if (url.pathname === "/api/quotations/1/processing/complete-acceptance") {
@@ -146,8 +158,80 @@ async function openProcessing(page, {
   await page.goto("/accept-order");
   await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
   return { registrations, removals, providerRegistrations, providerRemovals,
-    transitions, completions, stageRequests, invitations, value: () => value };
+    transitions, completions, stageRequests, invitations, corrections, correctionHeaders, value: () => value };
 }
+
+test("corrige aceptacion con motivo y vuelve a bloquear sin aceptar ni enviar correo", async ({ page }) => {
+  const state = await openProcessing(page, { accepted: true, canCorrectAcceptance: true });
+  await expect(page.getByLabel("Valor de la orden de compra")).toBeDisabled();
+  await page.getByRole("button", { name: "Modificar datos de aceptación", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Iniciar modificación" })).toBeDisabled();
+  await page.getByLabel("Motivo de modificación").fill("Corrección documental solicitada");
+  await page.getByRole("button", { name: "Iniciar modificación" }).click();
+  await expect(page.getByLabel("Valor de la orden de compra")).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Aceptada", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Correo vendedor", exact: true })).toBeDisabled();
+  await page.getByLabel("Valor de la orden de compra").fill("125");
+  await page.getByLabel("Moneda de la orden de compra").selectOption("USD");
+  await page.getByRole("button", { name: "Guardar valor de orden", exact: true }).click();
+  await expect.poll(() => state.value().amount).toBe(125);
+  await page.getByLabel("Fecha de aceptacion", { exact: true }).fill("2026-11-06");
+  await page.getByLabel("Notas", { exact: true }).fill("Corrección de fecha documentada");
+  await page.getByRole("button", { name: "Finalizar modificación", exact: true }).click();
+  await expect(page.getByLabel("Valor de la orden de compra")).toBeDisabled();
+  expect(state.corrections).toEqual([{ acceptedAt: "2026-11-06T12:00:00.000Z", notes: "Corrección de fecha documentada" }]);
+  expect(state.correctionHeaders).toHaveLength(2);
+  expect(state.correctionHeaders.every((entry) => entry.reason === "Corrección documental solicitada")).toBe(true);
+  expect(state.transitions).toEqual([]);
+});
+
+test("oculta correccion sin permiso", async ({ page }) => {
+  await openProcessing(page, { accepted: true });
+  await expect(page.getByRole("button", { name: "Modificar datos de aceptación" })).toHaveCount(0);
+});
+
+test("exige completar el registro antes de modificar aceptacion", async ({ page }) => {
+  await openProcessing(page, { accepted: true, acceptanceRecorded: false, canCorrectAcceptance: true });
+  await expect(page.getByRole("button", { name: "Modificar datos de aceptación", exact: true })).toBeDisabled();
+});
+
+test("audita el motivo en documentos corregidos y no mantiene el desbloqueo al reabrir", async ({ page }) => {
+  const state = await openProcessing(page, { accepted: true, canCorrectAcceptance: true });
+  await page.getByRole("button", { name: "Modificar datos de aceptación", exact: true }).click();
+  await page.getByLabel("Motivo de modificación").fill("Sustitución de documentos del cierre");
+  await page.getByRole("button", { name: "Iniciar modificación" }).click();
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Quitar cotización de proveedor del cierre: proveedor.pdf", exact: true }).click();
+  await expect.poll(() => state.providerRemovals.length).toBe(1);
+  await page.getByLabel("Archivo de cotización de proveedor", { exact: true }).selectOption("quotation:30");
+  await page.getByRole("button", { name: "Registrar cotización de proveedor", exact: true }).click();
+  await expect.poll(() => state.providerRegistrations.length).toBe(1);
+  await page.getByRole("button", { name: "Quitar orden de compra del cierre", exact: true }).click();
+  await expect.poll(() => state.removals.length).toBe(1);
+  await page.getByLabel("Archivo de orden de compra", { exact: true }).selectOption("quotation:20");
+  await page.getByRole("button", { name: "Registrar orden de compra", exact: true }).click();
+  await expect.poll(() => state.registrations.length).toBe(1);
+  expect(state.correctionHeaders).toHaveLength(4);
+  expect(state.correctionHeaders.every((entry) => entry.reason === "Sustitución de documentos del cierre")).toBe(true);
+  await page.getByRole("button", { name: "Cerrar procesamiento", exact: true }).click();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await expect(page.getByLabel("Valor de la orden de compra")).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Modificar datos de aceptación", exact: true })).toBeVisible();
+});
+
+test("mantiene modo correccion si falla al guardar fecha y notas", async ({ page }) => {
+  await openProcessing(page, { accepted: true, canCorrectAcceptance: true });
+  await page.route("**/api/quotations/1/processing/acceptance-correction", (route) =>
+    route.fulfill({ status: 500, json: { message: "No fue posible guardar la corrección" } }));
+  await page.getByRole("button", { name: "Modificar datos de aceptación", exact: true }).click();
+  await page.getByLabel("Motivo de modificación").fill("Corrección documental solicitada");
+  await page.getByRole("button", { name: "Iniciar modificación" }).click();
+  await page.getByLabel("Fecha de aceptacion", { exact: true }).fill("2026-11-06");
+  await page.getByRole("button", { name: "Finalizar modificación", exact: true }).click();
+  await expect(page.getByText("No fue posible guardar la corrección", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Finalizar modificación", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Fecha de aceptacion", { exact: true })).toBeEnabled();
+});
 
 const assignedSeller = { id: 1, fullName: "Vendedor asignado", email: "assigned@example.test" };
 const otherSeller = { id: 2, fullName: "Otro vendedor", email: "other@example.test" };

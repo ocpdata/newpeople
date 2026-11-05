@@ -11,6 +11,8 @@ import { query, withTransaction } from "../src/db.js";
 import { sendCommercialActionEmail } from "../src/utils.js";
 import router from "../src/routes.quotations.js";
 import { lockQuotationClosure } from "../src/quotation-closure-lock.js";
+import { logAuditEvent } from "../src/audit.js";
+import { ACCEPTANCE_CORRECTION_PERMISSION, acceptanceCorrectionOptions } from "../src/acceptance-correction.js";
 
 const originalDate = "2026-11-05T12:00:00.000Z";
 let status, lockedStatus, recorded, transactionQuery;
@@ -55,6 +57,11 @@ beforeEach(() => {
       return [[{ id: 9, status_code: recorded ? "completed" : "not_started",
         notes: "Nota original", owner_user_id: 7, stage_data_json: "{}" }]];
     }
+    if (sql.includes("SELECT * FROM quotation_processing_stages")) {
+      return [[{ id: 9, status_code: recorded ? "completed" : "not_started",
+        notes: "Nota original", owner_user_id: 7, completed_at: originalDate,
+        stage_data_json: JSON.stringify({ acceptedAt: originalDate, custom: "preserved" }) }]];
+    }
     if (sql.includes("SELECT stage_data_json, completed_at")) return [[{ stage_data_json: JSON.stringify({ acceptedAt: originalDate }) }]];
     if (sql.includes("SELECT id, stage_data_json")) return [[{ id: 9, stage_data_json: JSON.stringify({ other: "preserved" }) }]];
     if (sql.includes("SELECT accepted_at FROM quotation_won_documents")) return [[{ accepted_at: originalDate }]];
@@ -76,6 +83,68 @@ const closureRequests = [
   ["patch", "/api/quotations/1/processing/stages/quotation_accepted", { status: "completed" }],
 ];
 describe("Accepted quotation closure lock", () => {
+  const reason = encodeURIComponent("Corrección documental solicitada");
+  const correctionPermissions = ["aceptar_pedido.procesamiento.update", "cotizaciones.operacion", ACCEPTANCE_CORRECTION_PERMISSION];
+  it.each(closureRequests.slice(0, 5))("allows authorized correction %s %s and audits the reason", async (method, path, body) => {
+    const response = await request(app(correctionPermissions))[method](path)
+      .set("X-Acceptance-Correction-Reason", reason).send(body);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      after: expect.objectContaining({ correctionReason: "Corrección documental solicitada" }),
+    }));
+    expect(transactionQuery.mock.calls.some(([sql]) => sql.includes("UPDATE quotations") || sql.includes("UPDATE quotation_versions"))).toBe(false);
+  });
+  it.each(closureRequests.slice(5))("keeps the normal bulk, mail and stage endpoints blocked: %s %s", async (method, path, body) => {
+    const response = await request(app(correctionPermissions))[method](path)
+      .set("X-Acceptance-Correction-Reason", reason).send(body);
+    expect(response.status).toBe(409);
+    expect(sendCommercialActionEmail).not.toHaveBeenCalled();
+  });
+  it("requires correction permission and a valid reason for every mutation", async () => {
+    const path = "/api/quotation-versions/10/won-documents/quotation/20/value";
+    expect((await request(app()).patch(path).set("X-Acceptance-Correction-Reason", reason).send({ amount: 10, currencyCode: "USD" })).status).toBe(403);
+    expect((await request(app(correctionPermissions)).patch(path).set("X-Acceptance-Correction-Reason", "short").send({ amount: 10, currencyCode: "USD" })).status).toBe(400);
+    expect((await request(app(correctionPermissions)).patch(path).send({ amount: 10, currencyCode: "USD" })).status).toBe(409);
+    expect(() => acceptanceCorrectionOptions({ user: { permissionSet: new Set(correctionPermissions) }, get: () => "%XX" })).toThrow("inválido");
+  });
+  it("keeps the recorded acceptance date when adding a document after removing all associations", async () => {
+    const response = await request(app(correctionPermissions))
+      .post("/api/quotation-versions/10/won-documents/purchase-orders")
+      .set("X-Acceptance-Correction-Reason", reason)
+      .send({ source: "quotation", documentId: 20 });
+    expect(response.status).toBe(200);
+    const inserted = transactionQuery.mock.calls.find(([sql]) => sql.includes("INSERT INTO quotation_won_documents"));
+    expect(new Date(inserted[1][6]).toISOString()).toBe(originalDate);
+  });
+  it("corrects only date and notes, preserving stage completion and recording before/after", async () => {
+    recorded = true;
+    const acceptedAt = "2026-11-06T12:00:00.000Z";
+    const response = await request(app(correctionPermissions))
+      .patch("/api/quotations/1/processing/acceptance-correction")
+      .set("X-Acceptance-Correction-Reason", reason)
+      .send({ acceptedAt, notes: "Nota corregida" });
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const insert = transactionQuery.mock.calls.find(([sql]) => sql.includes("INSERT INTO quotation_processing_stages"));
+    expect(insert[1][4]).toBe("completed");
+    expect(insert[1][5]).toBe(7);
+    expect(JSON.parse(insert[1][10])).toMatchObject({ acceptedAt, custom: "preserved" });
+    expect(logAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      action: "quotation_acceptance_corrected",
+      before: { notes: "Nota original", acceptedAt: originalDate },
+      after: { notes: "Nota corregida", acceptedAt },
+    }));
+  });
+  it("rejects correction of pending records, won quotations and unapproved fields", async () => {
+    const invoke = (body) => request(app(correctionPermissions)).patch("/api/quotations/1/processing/acceptance-correction")
+      .set("X-Acceptance-Correction-Reason", reason).send(body);
+    const body = { acceptedAt: originalDate, notes: null };
+    expect((await invoke(body)).status).toBe(409);
+    recorded = true;
+    status = "ganada";
+    expect((await invoke(body)).status).toBe(409);
+    expect((await invoke({ ...body, status: "not_started" })).status).toBe(400);
+    expect((await invoke({ ...body, acceptedAt: null })).status).toBe(400);
+  });
   it.each(closureRequests)("rejects %s %s after acceptance without mutations or email", async (method, path, body) => {
     const response = await request(app())[method](path).send(body);
     expect(response.status, JSON.stringify(response.body)).toBe(409);

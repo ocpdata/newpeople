@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+import { acceptanceCorrectionConfig } from "./acceptanceCorrection";
 
-export default function ProviderQuoteRemoveButton({ document, versionId, canUpdate, onRemoved, onBusyChange }) {
+export default function ProviderQuoteRemoveButton({ document, versionId, canUpdate, onRemoved, onBusyChange, correctionReason }) {
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
 
@@ -11,7 +12,7 @@ export default function ProviderQuoteRemoveButton({ document, versionId, canUpda
     onBusyChange?.(true);
     setError("");
     try {
-      await api.delete(`/api/quotation-versions/${versionId}/won-documents/provider-quotes/${document.source}/${document.documentId}`);
+      await api.delete(`/api/quotation-versions/${versionId}/won-documents/provider-quotes/${document.source}/${document.documentId}`, acceptanceCorrectionConfig(correctionReason));
       onRemoved();
     } catch (removeError) {
       setError(getApiErrorMessage(removeError, "No fue posible quitar la cotización de proveedor"));

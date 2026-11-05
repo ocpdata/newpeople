@@ -391,6 +391,19 @@ describe("Report HTTP access and validation", () => {
     return app;
   };
   it.each([
+    ["reportes.contribucion.read", 2, "own"],
+    ["reportes.contribucion.read_all", 3, "all"],
+  ])("authorizes contribution independently with %s", async (permission, total, scope) => {
+    const app = appFor(user([permission]));
+    const response = await request(app).get("/api/reports/opportunity-contribution");
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ total, scope });
+    expect((await request(app).get("/api/reports/opportunity-contribution/catalogs")).status).toBe(200);
+    expect((await request(app).get("/api/reports/opportunity-profitability")).status).toBe(403);
+    expect((await request(app).get("/api/reports/opportunity-contribution?page=0")).status).toBe(400);
+    expect((await request(appFor(user(["reportes.rentabilidad.read_all"]))).get("/api/reports/opportunity-contribution")).status).toBe(403);
+  });
+  it.each([
     [], ["oportunidades.read"], ["cotizaciones.operacion"], ["reportes.access"],
     ["oportunidades.read_all", "cotizaciones.administracion"],
     ["oportunidades.read", "aceptar_pedido.procesamiento.read"],
@@ -432,6 +445,49 @@ describe("Report HTTP access and validation", () => {
 });
 
 describe("Report data isolation", () => {
+  it("contribution converts both components, handles missing rates and zero sales without changing profitability", async () => {
+    const current = user(["reportes.contribucion.read", "reportes.rentabilidad.read"]);
+    const readContribution = () => listOpportunityProfitability(current, profitabilityFiltersSchema.parse({ search: "Oportunidad 3" }), "contribution");
+    await withChanges([
+      "UPDATE quotation_section_items SET item_type = 'servicio_propio' WHERE id = 3011",
+      "UPDATE quotation_versions SET currency_code = 'MXN', exchange_rate = 20 WHERE id = 3011",
+    ], [
+      "UPDATE quotation_section_items SET item_type = 'producto' WHERE id = 3011",
+      "UPDATE quotation_versions SET currency_code = 'USD', exchange_rate = 1, summary_discount_value = 10 WHERE id = 3011",
+    ], async () => {
+      const row = (await readContribution()).items[0];
+      expect(row.totals).toMatchObject({ sale: 4.5, productCost: 0, serviceCost: 5, profit: 4.5, marginPct: 100 });
+      expect((await profitability({ search: "Oportunidad 3" }, current)).items[0].totals.profit).toBe(-0.5);
+      await connection.query("UPDATE quotation_versions SET exchange_rate = NULL WHERE id = 3011");
+      await refreshFixtures();
+      expect((await readContribution()).summary).toMatchObject({ missingCount: 1, totals: null });
+      await connection.query("UPDATE quotation_versions SET exchange_rate = 20, summary_discount_value = 100 WHERE id = 3011");
+      await refreshFixtures();
+      expect((await readContribution()).items[0].totals).toMatchObject({ sale: 0, profit: 0, marginPct: null });
+    });
+  });
+
+  it("calculates contribution without service costs while retaining service sales and original costs", async () => {
+    await withChanges([
+      "UPDATE quotation_versions SET status_id = 2 WHERE id = 3021",
+      "UPDATE quotation_section_items SET item_type = 'servicio_propio', profit_margin_pct = 50 WHERE id = 3021",
+    ], [
+      "UPDATE quotation_versions SET status_id = 3 WHERE id = 3021",
+      "UPDATE quotation_section_items SET item_type = 'producto', profit_margin_pct = 0 WHERE id = 3021",
+    ], async () => {
+      const current = user(["reportes.contribucion.read"]);
+      const result = await listOpportunityProfitability(current, profitabilityFiltersSchema.parse({ sort: "profit" }), "contribution");
+      const row = result.items.find((item) => item.id === 3);
+      expect(row.totals).toMatchObject({ sale: 180, productCost: 100, serviceCost: 50, totalCost: 100, profit: 80 });
+      expect(row.totals.marginPct).toBeCloseTo(80 / 180 * 100);
+      expect(row.quotations.find((q) => q.id === 302).original).toMatchObject({ sale: 90, serviceCost: 50, totalCost: 0, profit: 90, marginPct: 100 });
+      expect(result.summary.totals.profit).toBe(70);
+      expect(result.scope).toBe("own");
+      expect((await getReportCatalogs(current, "contribution")).accounts).toHaveLength(1);
+      await expect(profitability({}, current)).rejects.toMatchObject({ status: 403 });
+    });
+  });
+
   it("uses seller assignment, not account ownership, and applies reassignment immediately", async () => {
     await withChanges([
       "UPDATE opportunities SET seller_user_id = 20 WHERE id = 3",

@@ -8,6 +8,7 @@ import QuotationStatusIcon from "./quotations/QuotationStatusIcon";
 import PurchaseOrderValueFields from "./quotations/PurchaseOrderValueFields";
 import ClosingDocumentPicker from "./quotations/ClosingDocumentPicker";
 import ProviderQuoteRemoveButton from "./quotations/ProviderQuoteRemoveButton";
+import { acceptanceCorrectionConfig } from "./quotations/acceptanceCorrection";
 import PurchaseOrderPrintPreviewModal from "./quotations/PurchaseOrderPrintPreviewModal";
 import { buildPurchaseOrderPrintModel } from "./quotations/buildPurchaseOrderPrintModel";
 import { getQuotationStatusTone } from "./quotations/quotationStatusPresentation";
@@ -858,6 +859,9 @@ export default function AcceptOrderPage() {
     buildAcceptOrderWonDocumentsState(),
   );
   const [quotationToProcess, setQuotationToProcess] = useState(null);
+  const [acceptanceCorrectionReason, setAcceptanceCorrectionReason] = useState("");
+  const [acceptanceCorrectionDraft, setAcceptanceCorrectionDraft] = useState("");
+  const [acceptanceCorrectionOpen, setAcceptanceCorrectionOpen] = useState(false);
   const [processingData, setProcessingData] = useState(() =>
     buildEmptyProcessingData(),
   );
@@ -1483,6 +1487,9 @@ export default function AcceptOrderPage() {
   }
 
   async function openProcessingModal(quotation) {
+    setAcceptanceCorrectionReason("");
+    setAcceptanceCorrectionDraft("");
+    setAcceptanceCorrectionOpen(false);
     setQuotationToProcess(quotation);
     setError("");
     setSuccess("");
@@ -1511,6 +1518,9 @@ export default function AcceptOrderPage() {
     }
 
     setQuotationToProcess(null);
+    setAcceptanceCorrectionReason("");
+    setAcceptanceCorrectionDraft("");
+    setAcceptanceCorrectionOpen(false);
     setProcessingData(buildEmptyProcessingData());
     setProcessingModalError("");
     setActiveProcessingStageCode("quotation_accepted");
@@ -2115,9 +2125,13 @@ export default function AcceptOrderPage() {
         notes: stage.notes || null,
         stageData: nextStageData,
       };
+      const correcting = stageCode === "quotation_accepted" && Boolean(acceptanceCorrectionReason);
       const { data } = await api.patch(
-        `/api/quotations/${quotationId}/processing/stages/${encodeURIComponent(stageCode)}`,
-        payload,
+        correcting
+          ? `/api/quotations/${quotationId}/processing/acceptance-correction`
+          : `/api/quotations/${quotationId}/processing/stages/${encodeURIComponent(stageCode)}`,
+        correcting ? { acceptedAt: nextStageData.acceptedAt, notes: payload.notes } : payload,
+        correcting ? acceptanceCorrectionConfig(acceptanceCorrectionReason) : {},
       );
       setProcessingData((current) => ({
         ...current,
@@ -4831,8 +4845,8 @@ export default function AcceptOrderPage() {
   const processingClosureBusy = processingAccepting || Boolean(acceptingVersionId) ||
     processingSavingStageCode === "quotation_accepted" || Boolean(sendingNotificationQuotationId);
   const canEditProcessingClosure = Boolean(processingData.permissions?.canUpdate) &&
-    !isProcessingQuotationAccepted && !processingClosureBusy;
-  const processingClosureReadOnlyReason = isProcessingQuotationAccepted
+    (!isProcessingQuotationAccepted || Boolean(acceptanceCorrectionReason)) && !processingClosureBusy;
+  const processingClosureReadOnlyReason = isProcessingQuotationAccepted && !acceptanceCorrectionReason
     ? "Cotización aceptada. Documentos de cierre en solo consulta."
     : processingClosureBusy ? "Operación en curso. Espera a que termine para modificar los documentos." : "";
   const isKickoffInternalStage =
@@ -5700,10 +5714,56 @@ export default function AcceptOrderPage() {
 
                     {isQuotationAcceptedStage ? (
                       <div className="processing-accepted-scroll-area">
-                        {isProcessingQuotationAccepted && (
+                        {isProcessingQuotationAccepted && !acceptanceCorrectionReason && (
                           <p className="field-hint" role="status">
                             Cotización aceptada. No se permiten cambios en los documentos de cierre ni el envío de correo al vendedor.
                           </p>
+                        )}
+                        {isProcessingQuotationAccepted && processingData.permissions?.canCorrectAcceptance && (
+                          <section className="processing-stage-box">
+                            {acceptanceCorrectionReason ? (
+                              <>
+                                <strong>Modificación de datos de aceptación activa</strong>
+                                <p>Motivo: {acceptanceCorrectionReason}</p>
+                                <p>Los documentos y valores se guardan con cada acción. La fecha y las notas se guardan al finalizar. La cotización permanece Aceptada y no se envían correos.</p>
+                                <button type="button" className="btn-primary"
+                                  disabled={processingClosureBusy || processingDocumentOperations > 0}
+                                  onClick={() => void (async () => {
+                                    if (await saveProcessingStage("quotation_accepted")) {
+                                      setAcceptanceCorrectionReason("");
+                                      setAcceptanceCorrectionDraft("");
+                                    }
+                                  })()}>
+                                  Finalizar modificación
+                                </button>
+                              </>
+                            ) : acceptanceCorrectionOpen ? (
+                              <>
+                                <label className="field-group">
+                                  <span>Motivo de modificación</span>
+                                  <textarea rows={3} minLength={10} maxLength={1000}
+                                    value={acceptanceCorrectionDraft}
+                                    onChange={(event) => setAcceptanceCorrectionDraft(event.target.value)} />
+                                </label>
+                                <p className="field-hint">Indica al menos 10 caracteres. Cada cambio quedará auditado con este motivo.</p>
+                                <div className="processing-stage-actions split">
+                                  <button type="button" className="btn-secondary" onClick={() => setAcceptanceCorrectionOpen(false)}>Volver</button>
+                                  <button type="button" className="btn-primary"
+                                    disabled={acceptanceCorrectionDraft.trim().length < 10 || processingClosureBusy || processingDocumentOperations > 0}
+                                    onClick={() => {
+                                      setAcceptanceCorrectionReason(acceptanceCorrectionDraft.trim());
+                                      setAcceptanceCorrectionOpen(false);
+                                    }}>Iniciar modificación</button>
+                                </div>
+                              </>
+                            ) : (
+                              <button type="button" className="btn-secondary"
+                                disabled={activeProcessingStage.acceptanceRecorded === false || processingClosureBusy || processingDocumentOperations > 0}
+                                onClick={() => setAcceptanceCorrectionOpen(true)}>
+                                Modificar datos de aceptación
+                              </button>
+                            )}
+                          </section>
                         )}
                         {isProcessingQuotationAccepted && activeProcessingStage.acceptanceRecorded === false && (
                           <p className="field-hint">
@@ -5907,6 +5967,7 @@ export default function AcceptOrderPage() {
                                   selections={processingWonDocuments.purchaseOrders}
                                   excludedDocuments={processingWonDocuments.providerQuotes}
                                   canUpdate={canEditProcessingClosure}
+                                  correctionReason={acceptanceCorrectionReason}
                                   readOnlyReason={processingClosureReadOnlyReason}
                                   onBusyChange={handleProcessingDocumentBusyChange}
                                   onSaved={(data) => setProcessingWonDocuments({
@@ -5950,6 +6011,7 @@ export default function AcceptOrderPage() {
                                       order={order}
                                       versionId={quotationToProcess?.latestVersionId}
                                       canUpdate={canEditProcessingClosure}
+                                      correctionReason={acceptanceCorrectionReason}
                                       onBusyChange={handleProcessingDocumentBusyChange}
                                       onRemoved={() => setProcessingWonDocuments((previous) => {
                                         const purchaseOrders = previous.purchaseOrders.filter((item) =>
@@ -5975,6 +6037,7 @@ export default function AcceptOrderPage() {
                                   selections={processingWonDocuments.providerQuotes}
                                   excludedDocuments={processingWonDocuments.purchaseOrders}
                                   canUpdate={canEditProcessingClosure}
+                                  correctionReason={acceptanceCorrectionReason}
                                   readOnlyReason={processingClosureReadOnlyReason}
                                   onBusyChange={handleProcessingDocumentBusyChange}
                                   onSaved={(data) => setProcessingWonDocuments({
@@ -6038,6 +6101,7 @@ export default function AcceptOrderPage() {
                                           document={item}
                                           versionId={quotationToProcess?.latestVersionId}
                                           canUpdate={canEditProcessingClosure}
+                                          correctionReason={acceptanceCorrectionReason}
                                           onBusyChange={handleProcessingDocumentBusyChange}
                                           onRemoved={() => setProcessingWonDocuments((previous) => ({
                                             ...previous,

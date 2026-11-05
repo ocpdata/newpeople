@@ -24,14 +24,14 @@ export const profitabilityFiltersSchema = z.object({
   path: ["dateTo"],
 });
 
-function metrics(sale, productCost, serviceCost) {
-  const totalCost = productCost + serviceCost;
+function metrics(sale, productCost, serviceCost, excludeServiceCost = false) {
+  const totalCost = productCost + (excludeServiceCost ? 0 : serviceCost);
   const profit = sale - totalCost;
   return { sale, productCost, serviceCost, totalCost, profit, marginPct: sale > 0 ? profit / sale * 100 : null };
 }
 
-function aggregateMetrics(row) {
-  const subtotal = metrics(Number(row.sale || 0), Number(row.product_cost || 0), Number(row.service_cost || 0));
+function aggregateMetrics(row, excludeServiceCost) {
+  const subtotal = metrics(Number(row.sale || 0), Number(row.product_cost || 0), Number(row.service_cost || 0), excludeServiceCost);
   const missingCount = Number(row.missing_count || 0);
   return {
     missingCount,
@@ -41,13 +41,14 @@ function aggregateMetrics(row) {
   };
 }
 
-export async function listOpportunityProfitability(user, filters) {
+export async function listOpportunityProfitability(user, filters, report = "profitability") {
+  const excludeServiceCost = report === "contribution";
   const selection = reportFiltersSchema.parse({
     search: filters.search, accountId: filters.accountId, sellerUserId: filters.sellerUserId,
     dateFrom: filters.dateFrom, dateTo: filters.dateTo, dateType: "actual_close",
     commercialStatuses: "ganada", quotationStatuses: "ganada,aceptada",
   });
-  const { cte, params } = buildReportSelection(user, selection, "profitability");
+  const { cte, params } = buildReportSelection(user, selection, report);
   const sql = `${cte}, profitability_quotations AS (
     SELECT lv.quotation_id, lv.opportunity_id, lv.version_number, lv.proposal_name,
            lv.status_name, lv.currency_code, lv.exchange_rate,
@@ -70,11 +71,12 @@ export async function listOpportunityProfitability(user, filters) {
            COALESCE(SUM(service_cost / divisor), 0) AS service_cost
     FROM profitability_quotations GROUP BY opportunity_id
   )`;
+  const costSql = excludeServiceCost ? "pt.product_cost" : "(pt.product_cost + pt.service_cost)";
   const columns = {
     id: "so.id", name: "so.name", sale: "pt.sale",
-    totalCost: "(pt.product_cost + pt.service_cost)",
-    profit: "(pt.sale - pt.product_cost - pt.service_cost)",
-    marginPct: "(pt.sale - pt.product_cost - pt.service_cost) / NULLIF(pt.sale, 0)",
+    totalCost: costSql,
+    profit: `(pt.sale - ${costSql})`,
+    marginPct: `(pt.sale - ${costSql}) / NULLIF(pt.sale, 0)`,
   };
   const sort = ["id", "name"].includes(filters.sort)
     ? columns[filters.sort] : `CASE WHEN pt.missing_count = 0 THEN ${columns[filters.sort]} END`;
@@ -101,20 +103,20 @@ export async function listOpportunityProfitability(user, filters) {
       ${reportSelect} * FROM profitability_quotations WHERE opportunity_id IN (${ids.map(() => "?").join(",")})
       ORDER BY quotation_id`, [...params, ...ids]) : [];
     return {
-      page, pageSize: filters.pageSize, total, scope: requireReportScope(user, "profitability"),
-      summary: { opportunityCount: total, ...aggregateMetrics(summary) },
+      page, pageSize: filters.pageSize, total, scope: requireReportScope(user, report),
+      summary: { opportunityCount: total, ...aggregateMetrics(summary, excludeServiceCost) },
       items: rows.map((row) => ({
         id: Number(row.id), name: row.name, accountName: row.account_name, sellerName: row.seller_name,
-        ...aggregateMetrics(row),
+        ...aggregateMetrics(row, excludeServiceCost),
         quotations: quotations.filter((q) => Number(q.opportunity_id) === Number(row.id)).map((q) => {
-          const original = metrics(Number(q.sale), Number(q.product_cost), Number(q.service_cost));
+          const original = metrics(Number(q.sale), Number(q.product_cost), Number(q.service_cost), excludeServiceCost);
           const divisor = q.divisor == null ? null : Number(q.divisor);
           return {
             id: Number(q.quotation_id), versionNumber: Number(q.version_number),
             proposalName: q.proposal_name, statusName: q.status_name,
             currency: q.currency_code, exchangeRate: q.exchange_rate == null ? null : Number(q.exchange_rate),
             original,
-            usd: divisor == null ? null : metrics(original.sale / divisor, original.productCost / divisor, original.serviceCost / divisor),
+            usd: divisor == null ? null : metrics(original.sale / divisor, original.productCost / divisor, original.serviceCost / divisor, excludeServiceCost),
           };
         }),
       })),

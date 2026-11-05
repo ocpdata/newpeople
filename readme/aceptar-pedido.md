@@ -4,6 +4,32 @@
 
 Formalizar la aceptación administrativa de cotizaciones ganadas y dar seguimiento al cierre documental y al procesamiento operativo del pedido.
 
+## Correccion de datos ya aceptados
+
+- En Aceptar cotizacion, "Modificar datos de aceptacion" requiere
+  `aceptar_pedido.procesamiento.modificar_aceptacion` ademas del permiso de
+  actualizacion de procesamiento y acceso a la cotizacion.
+- Primero debe estar completado el registro operativo de aceptacion. Para
+  registros historicos pendientes se utiliza "Completar registro".
+- Solicita motivo obligatorio de 10 a 1000 caracteres y habilita documentos de
+  cierre, valores y monedas de ordenes, fecha de aceptacion y notas.
+- Documentos y valores se guardan por accion; fecha y notas al pulsar
+  "Finalizar modificacion". No hay cancelacion de cambios ya guardados.
+  Cerrar el modal elimina el modo de correccion; los cambios no guardados en
+  fecha/notas requieren la confirmacion habitual de descarte.
+- La cotizacion permanece Aceptada. Aceptar y Correo vendedor siguen bloqueados.
+  No permite modificar partidas, precios o margenes ni otras etapas.
+- Cada solicitud de correccion lleva el motivo codificado en
+  `X-Acceptance-Correction-Reason`. La API comprueba permiso, motivo, version
+  vigente y bloqueo transaccional en cada operacion; no existe desbloqueo persistente.
+  Se auditan los documentos agregados/retirados, los valores anteriores/nuevos
+  y la fecha/notas antes/despues junto con usuario, fecha y motivo.
+- PATCH `/api/quotations/:quotationId/processing/acceptance-correction` solo
+  acepta `acceptedAt` (fecha ISO obligatoria) y `notes`. Mantiene los demas datos
+  de la etapa y sincroniza la fecha de los documentos de cierre.
+- La seleccion masiva normal, el guardado normal de etapa y el correo al vendedor
+  conservan el bloqueo de aceptacion, incluso con permiso de correccion.
+
 ## Alcance
 
 - Bandeja de cotizaciones en estado `ganada` y `aceptada`.
@@ -122,11 +148,14 @@ Formalizar la aceptación administrativa de cotizaciones ganadas y dar seguimien
   Aceptada deshabilitado, Correo vendedor no esta disponible y los documentos
   de cierre quedan en consulta (sin agregar, quitar ni editar importe/moneda).
   Fecha de aceptacion y notas del paso tambien quedan en solo lectura.
+  La excepcion controlada para documentos, valores, fecha y notas se describe
+  en "Correccion de datos ya aceptados"; no habilita aceptar ni reenviar correos.
 - Consultas, descargas y las demas etapas operativas se mantienen disponibles.
 - Mientras se acepta, los controles se bloquean. No se puede aceptar mientras
   haya un cambio documental o envio de correo en curso.
 - La API rechaza con HTTP 409 los cambios de cierre y el correo de cotizaciones
-  aceptadas, incluso desde las rutas compartidas de seleccion documental.
+  aceptadas salvo las operaciones individuales con permiso y motivo de correccion.
+  El correo y las rutas compartidas de seleccion documental permanecen bloqueados.
   Las operaciones y la transicion de aceptacion coordinan un bloqueo transaccional
   de la version actual para evitar cambios simultaneos.
 - Antes de aceptar se guardan los datos del paso. La aceptacion conserva la fecha

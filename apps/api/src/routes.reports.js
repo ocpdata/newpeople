@@ -11,6 +11,18 @@ import { listOpportunityProfitability, profitabilityFiltersSchema } from "./repo
 const router = express.Router();
 const authorize = (report) => requireAnyPermission(Object.values(REPORT_PERMISSIONS[report]));
 
+router.get("/opportunity-contribution/catalogs", authorize("contribution"), async (req, res) => {
+  res.json(await getReportCatalogs(req.user, "contribution"));
+});
+
+router.get("/opportunity-contribution", authorize("contribution"), async (req, res) => {
+  const parsed = profitabilityFiltersSchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Filtros de reporte inválidos", errors: parsed.error.flatten() });
+  }
+  res.json(await listOpportunityProfitability(req.user, parsed.data, "contribution"));
+});
+
 router.get("/opportunity-profitability/catalogs", authorize("profitability"), async (req, res) => {
   res.json(await getReportCatalogs(req.user, "profitability"));
 });

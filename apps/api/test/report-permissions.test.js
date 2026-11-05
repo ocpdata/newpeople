@@ -12,11 +12,13 @@ import { canAccessReports, getReportScope, REPORT_PERMISSIONS } from "../../../s
 beforeEach(() => query.mockClear());
 
 describe("Report permissions", () => {
-  it("registers five permissions in the Reports group without assigning existing roles", async () => {
+  it("registers seven permissions in the Reports group without assigning existing roles", async () => {
     await ensureCorePermissions({ autoAssignRoles: false });
     const inserts = query.mock.calls.filter(([sql, params]) =>
       sql.includes("INSERT INTO permissions") && params[1] === "reportes");
     expect(inserts.map(([, params]) => params[0])).toEqual([
+      "reportes.contribucion.read",
+      "reportes.contribucion.read_all",
       "reportes.access",
       "reportes.oportunidades_cotizaciones.read",
       "reportes.oportunidades_cotizaciones.read_all",

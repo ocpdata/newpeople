@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+import { acceptanceCorrectionConfig } from "./acceptanceCorrection";
 
 export default function ClosingDocumentPicker({
-  versionId, quotationDocuments, opportunityDocuments = [], selections, excludedDocuments = [], role, canUpdate, onSaved, onBusyChange, readOnlyReason,
+  versionId, quotationDocuments, opportunityDocuments = [], selections, excludedDocuments = [], role, canUpdate, onSaved, onBusyChange, readOnlyReason, correctionReason,
 }) {
   const [selected, setSelected] = useState("");
   const [saving, setSaving] = useState(false);
@@ -28,7 +29,7 @@ export default function ClosingDocumentPicker({
     try {
       const { data } = await api.post(`/api/quotation-versions/${versionId}/won-documents/${isProviderQuote ? "provider-quotes" : "purchase-orders"}`, {
         source: document.source, documentId: document.documentId,
-      });
+      }, acceptanceCorrectionConfig(correctionReason));
       setSelected("");
       onSaved(data);
     } catch (saveError) {

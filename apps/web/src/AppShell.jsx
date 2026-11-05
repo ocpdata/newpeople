@@ -275,6 +275,7 @@ export default function AppShell({
   const canReadOpportunitiesQuotationsReport =
     getReportScope(can, "opportunitiesQuotations") !== null;
   const canReadProfitabilityReport = getReportScope(can, "profitability") !== null;
+  const canReadContributionReport = getReportScope(can, "contribution") !== null;
   const canAccessReportsModule = canAccessReports(can);
   const canAccessCommercialDevelopment =
     (can("desarrollo_comercial.read") || can("desarrollo_comercial.update")) &&
@@ -366,11 +367,15 @@ export default function AppShell({
         />
         <Route
           path="/reports"
-          element={<ReportsPage canAccess={canAccessReportsModule} canReadOpportunitiesQuotations={canReadOpportunitiesQuotationsReport} canReadProfitability={canReadProfitabilityReport} />}
+          element={<ReportsPage canAccess={canAccessReportsModule} canReadOpportunitiesQuotations={canReadOpportunitiesQuotationsReport} canReadProfitability={canReadProfitabilityReport} canReadContribution={canReadContributionReport} />}
+        />
+        <Route
+          path="/reports/opportunity-contribution"
+          element={<OpportunityProfitabilityReportPage key="contribution" contribution canReadReport={canReadContributionReport} scope={getReportScope(can, "contribution")} />}
         />
         <Route
           path="/reports/opportunity-profitability"
-          element={<OpportunityProfitabilityReportPage canReadReport={canReadProfitabilityReport} scope={getReportScope(can, "profitability")} />}
+          element={<OpportunityProfitabilityReportPage key="profitability" canReadReport={canReadProfitabilityReport} scope={getReportScope(can, "profitability")} />}
         />
         <Route
           path="/reports/opportunities-quotations"

@@ -1,6 +1,6 @@
 import DashboardHubCard from "./DashboardHubCard";
 
-export default function ReportsPage({ canAccess, canReadOpportunitiesQuotations, canReadProfitability }) {
+export default function ReportsPage({ canAccess, canReadOpportunitiesQuotations, canReadProfitability, canReadContribution }) {
   return (
     <section className="dashboard-home-page">
       <header className="panel dashboard-home-hero">
@@ -16,8 +16,15 @@ export default function ReportsPage({ canAccess, canReadOpportunitiesQuotations,
           <div>
             <h3>Reportes disponibles</h3>
           </div>
-          {!canAccess ? <p role="alert">No tienes permiso para acceder a Reportes.</p> : canReadOpportunitiesQuotations || canReadProfitability ? (
+          {!canAccess ? <p role="alert">No tienes permiso para acceder a Reportes.</p> : canReadOpportunitiesQuotations || canReadProfitability || canReadContribution ? (
             <div className="dashboard-hub-grid">
+              {canReadContribution && <DashboardHubCard
+                title="Contribución de oportunidades ganadas"
+                description="Venta neta menos costo de productos, sin restar el costo de servicios. No representa utilidad final."
+                to="/reports/opportunity-contribution"
+                cta="Abrir reporte"
+                meta="Comercial · USD"
+              />}
               {canReadProfitability && <DashboardHubCard
                 title="Rentabilidad de oportunidades ganadas"
                 description="Consulta venta, costos y margen de las cotizaciones ganadas y aceptadas, consolidados por oportunidad."

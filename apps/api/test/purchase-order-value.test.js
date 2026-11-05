@@ -12,6 +12,7 @@ import { query, withTransaction } from "../src/db.js";
 import { logAuditEvent } from "../src/audit.js";
 import router from "../src/routes.quotations.js";
 import { purchaseOrderValueSchema } from "../src/purchase-order-value.js";
+import { lockQuotationClosure } from "../src/quotation-closure-lock.js";
 
 const endpoint = "/api/quotation-versions/10/won-documents/quotation/20/value";
 const removalEndpoint = "/api/quotation-versions/10/won-documents/quotation/20";
@@ -30,6 +31,7 @@ function app(permissions = ["aceptar_pedido.procesamiento.update"]) {
 describe("Purchase order value", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    lockQuotationClosure.mockResolvedValue({ id: 10, status_code: "ganada", latest_version_id: 10 });
     query.mockImplementation(async (sql) => {
       if (sql.includes("WHERE qv.id = ?")) return [{ id: 10, latest_version_id: 10, status_code: "aceptada" }];
       if (sql.includes("FROM currencies")) return [{ code: "MXN" }];

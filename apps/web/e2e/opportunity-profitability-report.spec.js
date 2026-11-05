@@ -66,6 +66,30 @@ test("abre el reporte y desglosa cotizaciones con sus monedas e importes", async
   await expect(details.getByText("Equivalente USD de #302")).toBeVisible();
 });
 
+test("contribucion tiene permiso independiente y muestra venta menos productos sin costo de servicios", async ({ page }) => {
+  await openReport(page, { permissions: ["reportes.contribucion.read"] });
+  const contributionTotals = { ...totals, totalCost: 700, profit: 800, marginPct: 800 / 1500 * 100 };
+  const data = {
+    ...payload, summary: { ...payload.summary, totals: contributionTotals },
+    items: [{ ...payload.items[0], totals: contributionTotals }],
+  };
+  await page.route("**/api/reports/opportunity-contribution**", (route) =>
+    route.fulfill({ json: route.request().url().includes("/catalogs") ? { accounts: [], sellers: [] } : data }));
+  await expect(page.getByRole("link", { name: /Rentabilidad de oportunidades ganadas/ })).toHaveCount(0);
+  await page.getByRole("link", { name: /Contribución de oportunidades ganadas/ }).click();
+  await expect(page.getByRole("heading", { name: "Contribución de oportunidades ganadas" })).toBeVisible();
+  await expect(page.getByText("Alcance: Mis datos (vendedor asignado actual)")).toBeVisible();
+  await expect(page.locator("dl")).toContainText("800.00");
+  await expect(page.locator("dl")).toContainText("53.33%");
+  await expect(page.getByRole("columnheader", { name: "Costo de servicios", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("columnheader", { name: "Costo total", exact: true })).toHaveCount(0);
+  await expect(page.getByText(/no representa utilidad final ni margen real/)).toBeVisible();
+  await page.getByText("Ver cotizaciones de #3").click();
+  await expect(page.getByRole("table", { name: "Cotizaciones de Proyecto rentable" })).toBeVisible();
+  await page.goto("/reports/opportunity-profitability");
+  await expect(page.getByRole("alert")).toContainText("Acceso insuficiente");
+});
+
 test("envia filtros y ordenamiento sin cambiar las reglas fijas y mantiene filtros al paginar", async ({ page }) => {
   const requests = await openReport(page);
   await page.goto("/reports/opportunity-profitability");

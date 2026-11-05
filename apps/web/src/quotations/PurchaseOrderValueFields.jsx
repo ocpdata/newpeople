@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, getApiErrorMessage } from "../api";
+import { acceptanceCorrectionConfig } from "./acceptanceCorrection";
 
-export default function PurchaseOrderValueFields({ order, versionId, canUpdate, onRemoved, onBusyChange }) {
+export default function PurchaseOrderValueFields({ order, versionId, canUpdate, onRemoved, onBusyChange, correctionReason }) {
   const [amount, setAmount] = useState(order.amount == null ? "" : String(order.amount));
   const [currency, setCurrency] = useState(order.currencyCode || "");
   const [currencies, setCurrencies] = useState([]);
@@ -35,6 +36,7 @@ export default function PurchaseOrderValueFields({ order, versionId, canUpdate, 
       const { data } = await api.patch(
         `/api/quotation-versions/${versionId}/won-documents/${order.source}/${order.documentId}/value`,
         { amount: value, currencyCode: currency },
+        acceptanceCorrectionConfig(correctionReason),
       );
       setAmount(String(data.amount));
       setCurrency(data.currencyCode);
@@ -54,7 +56,7 @@ export default function PurchaseOrderValueFields({ order, versionId, canUpdate, 
     setError("");
     setSuccess("");
     try {
-      await api.delete(`/api/quotation-versions/${versionId}/won-documents/${order.source}/${order.documentId}`);
+      await api.delete(`/api/quotation-versions/${versionId}/won-documents/${order.source}/${order.documentId}`, acceptanceCorrectionConfig(correctionReason));
       onRemoved();
     } catch (removeError) {
       setError(getApiErrorMessage(removeError, "No fue posible quitar la orden de compra"));

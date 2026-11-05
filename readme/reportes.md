@@ -40,6 +40,23 @@
 - Es rentabilidad cotizada, no costo real de ejecucion. No incluye exportacion ni
   comparacion cotizado contra real.
 
+## Contribucion de oportunidades ganadas
+
+- Reporte independiente en `/reports/opportunity-contribution`, disponible desde
+  Reportes. API: `/api/reports/opportunity-contribution` y su ruta `/catalogs`.
+- Reutiliza seleccion, filtros, conversion USD, paginacion y desglose de Rentabilidad:
+  solo oportunidades ganadas con cotizaciones vigentes ganadas o aceptadas, sumadas.
+- Conserva toda la venta neta de productos y servicios, despues de descuentos y
+  sin IVA. Contribucion = venta neta - costo de productos. Margen de contribucion =
+  contribucion / venta neta * 100; con venta cero no es calculable.
+- No resta el costo de servicios. No representa utilidad final ni margen real de
+  ejecucion. El reporte de Rentabilidad original sigue restando ambos costos.
+  La tabla y el resumen de Contribucion omiten costo de servicios y costo total.
+- Permisos independientes: `reportes.contribucion.read` (vendedor asignado actual)
+  y `reportes.contribucion.read_all` (todos los usuarios). Incluyen acceso al modulo,
+  sin permisos de origen ni de Rentabilidad; requieren asignacion explicita en
+  instalaciones existentes.
+
 ## Permisos y alcance
 
 Los permisos se administran bajo el grupo **Reportes**:
@@ -51,6 +68,8 @@ Los permisos se administran bajo el grupo **Reportes**:
 | `reportes.oportunidades_cotizaciones.read_all` | Oportunidades y cotizaciones de todos los usuarios |
 | `reportes.rentabilidad.read` | Rentabilidad propia, incluidos costos, utilidad y margen |
 | `reportes.rentabilidad.read_all` | Rentabilidad de todos los usuarios, incluidos costos, utilidad y margen |
+| `reportes.contribucion.read` | Contribucion propia: venta neta menos costo de productos |
+| `reportes.contribucion.read_all` | Contribucion de todos los usuarios: venta neta menos costo de productos |
 
 - Cualquier permiso especifico incluye entrada al modulo y todas las columnas y
   detalles del reporte. No requiere `reportes.access` ni permisos de Oportunidades,

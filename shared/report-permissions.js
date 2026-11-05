@@ -7,6 +7,10 @@ export const REPORT_PERMISSIONS = {
     own: "reportes.rentabilidad.read",
     all: "reportes.rentabilidad.read_all",
   },
+  contribution: {
+    own: "reportes.contribucion.read",
+    all: "reportes.contribucion.read_all",
+  },
 };
 
 export function getReportScope(can, report) {

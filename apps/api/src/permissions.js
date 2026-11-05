@@ -2,6 +2,18 @@ import { query, withTransaction } from "./db.js";
 
 const CORE_PERMISSIONS = [
   {
+    code: "aceptar_pedido.procesamiento.modificar_aceptacion", module: "aceptar_pedido", action: "procesamiento_modificar_aceptacion",
+    description: "Corregir documentos de cierre, valores y monedas de ordenes, fecha y notas de una cotizacion ya aceptada, con motivo y auditoria. Requiere actualizacion de procesamiento y acceso a la cotizacion. No modifica su contenido comercial ni permite reenviar correo al vendedor.",
+  },
+  {
+    code: "reportes.contribucion.read", module: "reportes", action: "contribucion.read",
+    description: "Consultar Contribucion de oportunidades ganadas propias: venta neta menos costo de productos, sin restar costo de servicios. Propias corresponde al vendedor asignado actual. Incluye acceso al modulo sin permisos de origen.",
+  },
+  {
+    code: "reportes.contribucion.read_all", module: "reportes", action: "contribucion.read_all",
+    description: "Consultar Contribucion de oportunidades ganadas de todos los usuarios: venta neta menos costo de productos, sin restar costo de servicios. Incluye acceso al modulo sin permisos de origen ni permiso de datos propios.",
+  },
+  {
     code: "reportes.access", module: "reportes", action: "access",
     description: "Entrar al modulo Reportes. No habilita ningun reporte por si solo.",
   },

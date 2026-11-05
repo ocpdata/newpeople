@@ -130,6 +130,9 @@ const PERMISSION_MODULE_DESCRIPTIONS = {
     "Organiza documentos internos por temas para que la IA los consulte como fuente de conocimiento. La biblioteca permite revisar los temas y documentos, mientras que los permisos de administración controlan su importación, carga, actualización, clasificación y eliminación. El acceso a esta pantalla no es requisito para consultar documentos activos desde el chatbot.",
 };
 const ROLE_PERMISSION_LABELS = {
+  "aceptar_pedido.procesamiento.modificar_aceptacion": { label: "Modificar datos de aceptacion", description: "Corregir documentos de cierre, valores y monedas de ordenes, fecha y notas con motivo y auditoria. Requiere actualizacion de procesamiento y acceso a la cotizacion. Mantiene el estado Aceptada y no permite reenviar correo al vendedor." },
+  "reportes.contribucion.read": { label: "Contribucion: datos propios" },
+  "reportes.contribucion.read_all": { label: "Contribucion: todos los usuarios" },
   "reportes.access": { label: "Acceder al modulo Reportes" },
   "reportes.oportunidades_cotizaciones.read": { label: "Oportunidades y cotizaciones: datos propios" },
   "reportes.oportunidades_cotizaciones.read_all": { label: "Oportunidades y cotizaciones: todos los usuarios" },

@@ -297,7 +297,7 @@ async function readReport(user, filters, read) {
 }
 
 export async function getReportCatalogs(user, report = "opportunitiesQuotations") {
-  const filters = reportFiltersSchema.parse(report === "profitability" ? {
+  const filters = reportFiltersSchema.parse(["profitability", "contribution"].includes(report) ? {
     commercialStatuses: "ganada", quotationStatuses: "ganada,aceptada",
   } : {});
   const { cte, params } = buildReportSelection(user, filters, report);
