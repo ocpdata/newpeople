@@ -54,6 +54,7 @@ const ContactsPage = lazy(() => import("./ContactsPage"));
 const OpportunitiesQuotationsReportPage = lazy(() => import("./OpportunitiesQuotationsReportPage"));
 const OpportunityProfitabilityReportPage = lazy(() => import("./OpportunityProfitabilityReportPage"));
 const MonthlyFinancialsPage = lazy(() => import("./MonthlyFinancialsPage"));
+const VariableCompensationPage = lazy(() => import("./VariableCompensationPage"));
 const ContactMappingPage = lazy(() => import("./ContactMappingPage"));
 const QuotationsPage = lazy(() => import("./QuotationsPage"));
 const QuotationPrintPage = lazy(() => import("./QuotationPrintPage"));
@@ -278,6 +279,8 @@ export default function AppShell({
   const canReadProfitabilityReport = getReportScope(can, "profitability") !== null;
   const canUpdateMonthlyFinancials = can("informacion_financiera.update");
   const canReadMonthlyFinancials = can("informacion_financiera.read") || canUpdateMonthlyFinancials;
+  const canUpdateVariableCompensation = can("variable_comercial.update");
+  const canReadVariableCompensation = can("variable_comercial.read") || canUpdateVariableCompensation;
   const canReadContributionReport = getReportScope(can, "contribution") !== null;
   const canAccessReportsModule = canAccessReports(can);
   const canAccessCommercialDevelopment =
@@ -700,6 +703,16 @@ export default function AppShell({
           }
         />
         <Route
+          path="/variable-compensation"
+          element={
+            canReadVariableCompensation ? (
+              <VariableCompensationPage canRead canUpdate={canUpdateVariableCompensation} />
+            ) : (
+              <Navigate to="/" />
+            )
+          }
+        />
+        <Route
           path="/commercial-enablement"
           element={
             canAccessCommercialEnablement ? (
@@ -929,6 +942,7 @@ export default function AppShell({
             {(canAccessCommercialTracking ||
               canAccessCommercialRhythm ||
               canAccessCommercialPlanning ||
+              canReadVariableCompensation ||
               canAccessCommercialEnablement) && (
               <SidebarNavGroup title="Gestión de ventas" userId={currentUser.id} key={`gestion:${location.pathname}`}>
                 {canAccessCommercialTracking ? (
@@ -945,6 +959,14 @@ export default function AppShell({
                     onBeforeNavigate={confirmRouteChange}
                   >
                     Metas y comisiones
+                  </GuardedNavLink>
+                ) : null}
+                {canReadVariableCompensation ? (
+                  <GuardedNavLink
+                    to="/variable-compensation"
+                    onBeforeNavigate={confirmRouteChange}
+                  >
+                    Variable comercial
                   </GuardedNavLink>
                 ) : null}
                 {canAccessCommercialRhythm ? (

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { ensureMonthlyFinancialSchema } from "./monthly-financials.js";
+import { ensureVariableCompensationSchema } from "./variable-compensation/schema.js";
 import { app } from "./app.js";
 import { startAccountDraftAnalysisWorker } from "./accounts/draft-analysis/async.js";
 import { ensureAccountDraftAnalysisJobSchema } from "./accounts/draft-analysis/jobs-schema.js";
@@ -86,6 +87,7 @@ export async function bootstrapDatabase() {
   const autoAssignRoles = await isInitialRoleAssignmentRequired();
   await ensureCorePermissions({ autoAssignRoles });
   await ensureMonthlyFinancialSchema();
+  await ensureVariableCompensationSchema();
   await ensureDocumentacionRagPermissions();
   await ensureDocumentacionRagSchema();
   await ensureAccountsSchema();

@@ -289,7 +289,7 @@ export async function buildCommissionTrackingPayload(periodId) {
               qv.exchange_rate, qv.summary_discount_mode, qv.summary_discount_value,
               qv.summary_distribution_mode, qv.summary_vat_mode, qv.summary_vat_pct,
               a.name AS account_name, o.name AS opportunity_name,
-              o.seller_user_id, su.full_name AS seller_user_name, su.email AS seller_user_email,
+              o.account_id, o.id AS opportunity_id, o.seller_user_id, su.full_name AS seller_user_name, su.email AS seller_user_email,
               COALESCE(
                 CASE WHEN ocs.code = 'ganada' THEN o.close_date END,
                 (SELECT MAX(al.created_at) FROM audit_log al
@@ -374,6 +374,8 @@ export async function buildCommissionTrackingPayload(periodId) {
     proposalName: quotationRow.proposal_name || `Cotizacion ${quotationRow.quotation_id}`,
     wonAt: quotationRow.won_at, statusCode: quotationRow.status_code,
     accountName: quotationRow.account_name || "",
+    accountId: Number(quotationRow.account_id),
+    opportunityId: Number(quotationRow.opportunity_id),
     opportunityName: quotationRow.opportunity_name || "",
     sellerUserId: Number(quotationRow.seller_user_id), sellerUserName: quotationRow.seller_user_name || "",
     sellerUserEmail: quotationRow.seller_user_email || "",

@@ -92,6 +92,8 @@ for (const { permissions, group, link } of [
   { permissions: ["proveedores.read"], group: "Operaciones", link: "Proveedores" },
   { permissions: ["informacion_financiera.read"], group: "Operaciones", link: "Información financiera mensual" },
   { permissions: ["informacion_financiera.update"], group: "Operaciones", link: "Información financiera mensual" },
+  { permissions: ["variable_comercial.read"], group: "Gestión de ventas", link: "Variable comercial" },
+  { permissions: ["variable_comercial.update"], group: "Gestión de ventas", link: "Variable comercial" },
   { permissions: ["audit.read"], group: "Administración", link: "Auditoría" },
   { permissions: ["pruebas.read"], group: "Administración", link: "Pruebas de seguridad" },
 ]) {

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 function formatPermissionModuleName(moduleName) {
   if (moduleName === "informacion_financiera") return "Información financiera mensual";
+  if (moduleName === "variable_comercial") return "Variable comercial";
   if (moduleName === "mi_coach") {
     return "Coach";
   }
@@ -76,6 +77,7 @@ function formatPermissionModuleName(moduleName) {
 
 const PERMISSION_MODULE_DESCRIPTIONS = {
   informacion_financiera: "Captura mensual compartida de la empresa: descuentos, devoluciones, compras, gastos y porcentajes de ISR y PTU. Sin cierres de periodos; los cambios se auditan.",
+  variable_comercial: "Cálculo en vivo del variable trimestral del equipo comercial con cuota, margen, equipo, clientes nuevos y cuentas actuales. Pensado para dirección: muestra a todos los vendedores. Las reglas de pago se editan con su propio permiso y se auditan.",
   reportes:
     "Habilita cada reporte de forma independiente, sin permisos de los modulos de origen. Datos propios corresponde al vendedor asignado actual de la oportunidad; todos los usuarios permite consulta global. Cada permiso de reporte incluye acceso al modulo y a todas sus columnas y detalles.",
   roles:
@@ -136,6 +138,8 @@ const PERMISSION_MODULE_DESCRIPTIONS = {
 const ROLE_PERMISSION_LABELS = {
   "informacion_financiera.read": { label: "Consultar información financiera mensual" },
   "informacion_financiera.update": { label: "Capturar y modificar información financiera mensual" },
+  "variable_comercial.read": { label: "Consultar variable comercial del equipo" },
+  "variable_comercial.update": { label: "Editar reglas de pago del variable comercial" },
   "aceptar_pedido.procesamiento.modificar_aceptacion": { label: "Modificar datos de aceptacion", description: "Corregir documentos de cierre, valores y monedas de ordenes, fecha y notas con motivo y auditoria. Requiere actualizacion de procesamiento y acceso a la cotizacion. Mantiene el estado Aceptada y no permite reenviar correo al vendedor." },
   "reportes.contribucion.read": { label: "Contribucion: datos propios" },
   "reportes.contribucion.read_all": { label: "Contribucion: todos los usuarios" },

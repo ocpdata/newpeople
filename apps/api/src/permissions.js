@@ -2,6 +2,14 @@ import { query, withTransaction } from "./db.js";
 
 const CORE_PERMISSIONS = [
   {
+    code: "variable_comercial.read", module: "variable_comercial", action: "read",
+    description: "Consultar el variable comercial del trimestre de todo el equipo: cuota, margen, componentes de pago, ventas acreditadas y reglas vigentes. Incluye acceso al modulo, sin permisos de otros modulos.",
+  },
+  {
+    code: "variable_comercial.update", module: "variable_comercial", action: "update",
+    description: "Editar las reglas de pago del variable comercial (umbrales, montos y topes), con auditoria. Incluye consulta.",
+  },
+  {
     code: "informacion_financiera.read", module: "informacion_financiera", action: "read",
     description: "Consultar informacion financiera mensual de la empresa. Incluye acceso al modulo, sin permisos de otros modulos.",
   },
