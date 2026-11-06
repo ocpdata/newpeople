@@ -88,6 +88,8 @@ async function fetchRate({ baseCurrency, targetCurrency }) {
       targetCurrency,
       exchangeRate,
       provider: "frankfurter",
+      rateDate: /^\d{4}-\d{2}-\d{2}$/.test(String(payload?.date || ""))
+        ? payload.date : null,
       fetchedAt: new Date().toISOString(),
     };
   } finally {

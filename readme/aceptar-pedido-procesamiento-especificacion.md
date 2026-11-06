@@ -282,6 +282,20 @@ Validaciones:
 
 ### Etapa: Orden de compra a proveedores
 
+El proveedor y sus contactos se determinan a partir de los productos marcados que no pertenecen a ordenes ya generadas. Las filas deshabilitadas por una orden generada no participan en esta seleccion.
+
+El tiempo de entrega es editable con permiso de actualizacion. Inicialmente se hereda de la cotizacion; los cambios se guardan en `stageData.purchaseOrderDeliveryTime` y se muestran al abrir la vista previa de la orden, sin modificar la cotizacion original. La moneda permanece en solo lectura.
+
+Al culminar, la etapa pasa a solo consulta: sus campos y acciones de modificacion
+quedan bloqueados, excepto Ver orden. Para modificarla se requieren actualizacion
+de procesamiento y `aceptar_pedido.procesamiento.modificar_culminacion_orden_compra`,
+ubicado en el grupo Aceptacion de pedidos. El boton Modificar datos de culminacion
+solicita un motivo de 10 a 1000 caracteres; Finalizar modificacion guarda y bloquea
+nuevamente sin cambiar estado ni fecha de culminacion. El motivo se envia en
+`X-Purchase-Order-Correction-Reason` y se audita con los cambios. La API protege
+guardado, creacion y eliminacion de ordenes bajo el mismo bloqueo transaccional.
+Cerrar y reabrir el modal no conserva el modo de modificacion.
+
 Campos base iniciales:
 
 - `poRequestedAt`
@@ -290,6 +304,13 @@ Campos base iniciales:
 - `purchaseOrderReferences[]`
 
 ### Etapa: Recepcion de productos
+
+Cada campo de fecha de recepcion, inicio de soporte/suscripcion y fin de
+soporte/suscripcion tiene un boton Repetir fecha. Copia la fecha a la misma
+columna de las filas siguientes de esa orden, solo en campos vacios, incluidas
+recepciones parciales. Respeta las fechas existentes y no afecta otras ordenes.
+Requiere permiso de actualizacion, una fecha de origen y destinos vacios.
+Los cambios se guardan mediante Guardar recepcion o Culminar Recepcion.
 
 Campos base iniciales:
 

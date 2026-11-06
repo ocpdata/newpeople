@@ -771,7 +771,8 @@ export default function AppShell({
           path="/provider-invoice-reception"
           element={
             canAccessAcceptOrder ? (
-              <ProviderInvoiceReceptionPage />
+              <ProviderInvoiceReceptionPage canUpdate={can("aceptar_pedido.procesamiento.update") ||
+                can("cotizaciones.operacion") || can("cotizaciones.administracion")} />
             ) : (
               <Navigate to="/" />
             )

@@ -45,6 +45,26 @@ Formalizar la aceptación administrativa de cotizaciones ganadas y dar seguimien
 - `aceptar_pedido.procesamiento.update`: editar la información de las etapas y gestionar documentos y evidencias.
 - `aceptar_pedido.procesamiento.ia`: generar resúmenes con IA a partir de evidencias disponibles.
 - `aceptar_pedido.procesamiento.convocar`: enviar convocatorias y notificaciones de kick off.
+- `aceptar_pedido.procesamiento.modificar_culminacion_orden_compra`: modificar el step 4 culminado, junto con actualizacion de procesamiento y acceso a la cotizacion. Se administra dentro de Aceptacion de pedidos.
+
+### Orden de compra culminada
+
+- Culminar Orden de Compra bloquea los campos y las acciones de modificacion del
+  step 4, incluida la creacion y eliminacion de ordenes. Ver orden, la navegacion
+  y el cierre permanecen disponibles.
+- Modificar datos de culminacion requiere el permiso especifico y un motivo de
+  10 a 1000 caracteres. Finalizar modificacion guarda y vuelve a bloquear; si
+  falla el guardado, el modo de modificacion permanece activo.
+- La etapa conserva su estado Completada y su fecha original de culminacion.
+  Los productos de ordenes generadas conservan sus restricciones.
+- Cerrar el modal elimina el modo de modificacion. Las creaciones y eliminaciones
+  de ordenes se guardan por accion; los campos se guardan con Guardar o Finalizar
+  modificacion. No se revierten acciones ya guardadas al cerrar.
+- La API exige `X-Purchase-Order-Correction-Reason` para modificar una etapa
+  culminada. Valida permiso y motivo en cada peticion y serializa culminacion,
+  guardado y creacion/eliminacion de ordenes mediante bloqueo transaccional de
+  la cotizacion. Se auditan los datos anteriores/nuevos y el motivo junto con
+  usuario y fecha. No hay un desbloqueo persistente ni se modifica la aceptacion.
 
 ## Ruta de UI
 

@@ -860,6 +860,10 @@ export default function AcceptOrderPage() {
   );
   const [quotationToProcess, setQuotationToProcess] = useState(null);
   const [acceptanceCorrectionReason, setAcceptanceCorrectionReason] = useState("");
+  const [purchaseOrderCorrectionReason, setPurchaseOrderCorrectionReason] = useState("");
+  const [purchaseOrderCorrectionDraft, setPurchaseOrderCorrectionDraft] = useState("");
+  const [purchaseOrderCorrectionOpen, setPurchaseOrderCorrectionOpen] = useState(false);
+  const [purchaseOrderGenerating, setPurchaseOrderGenerating] = useState(false);
   const [acceptanceCorrectionDraft, setAcceptanceCorrectionDraft] = useState("");
   const [acceptanceCorrectionOpen, setAcceptanceCorrectionOpen] = useState(false);
   const [processingData, setProcessingData] = useState(() =>
@@ -1487,6 +1491,9 @@ export default function AcceptOrderPage() {
   }
 
   async function openProcessingModal(quotation) {
+    setPurchaseOrderCorrectionReason("");
+    setPurchaseOrderCorrectionDraft("");
+    setPurchaseOrderCorrectionOpen(false);
     setAcceptanceCorrectionReason("");
     setAcceptanceCorrectionDraft("");
     setAcceptanceCorrectionOpen(false);
@@ -1504,6 +1511,10 @@ export default function AcceptOrderPage() {
   }
 
   function closeProcessingModal() {
+    if (purchaseOrderBusy) {
+      setError("Espera a que termine la operacion de orden de compra.");
+      return;
+    }
     if (processingClosureBusy || processingDocumentOperations > 0) {
       setError("Espera a que termine la operación en curso antes de cerrar el procesamiento.");
       return;
@@ -1518,6 +1529,9 @@ export default function AcceptOrderPage() {
     }
 
     setQuotationToProcess(null);
+    setPurchaseOrderCorrectionReason("");
+    setPurchaseOrderCorrectionDraft("");
+    setPurchaseOrderCorrectionOpen(false);
     setAcceptanceCorrectionReason("");
     setAcceptanceCorrectionDraft("");
     setAcceptanceCorrectionOpen(false);
@@ -1656,6 +1670,10 @@ export default function AcceptOrderPage() {
     productAssignmentExtras,
     excludedAssignmentKeys = new Set(),
   }) {
+    if (!canEditPurchaseOrder) {
+      setError("La etapa de orden de compra esta en solo consulta.");
+      return;
+    }
     const selectedProductIds = new Set(
       Object.entries(
         productAssignments && typeof productAssignments === "object"
@@ -1783,7 +1801,8 @@ export default function AcceptOrderPage() {
       providerQuotation: stage?.stageData?.providerQuotation || "",
       paymentConditions:
         stage?.stageData?.purchaseOrderPaymentConditions ?? paymentTermsName,
-      deliveryTime: deliveryTimeName,
+      deliveryTime:
+        stage?.stageData?.purchaseOrderDeliveryTime ?? deliveryTimeName,
       currencyCode: processingCurrencyCode || "USD",
       notes:
         stage?.stageData?.purchaseOrderNotes ?? DEFAULT_PURCHASE_ORDER_NOTES,
@@ -1913,6 +1932,10 @@ export default function AcceptOrderPage() {
   }
 
   async function confirmGeneratePurchaseOrdersFromPreview() {
+    if (!canEditPurchaseOrder) {
+      setError("La etapa de orden de compra esta en solo consulta.");
+      return;
+    }
     const generatedOrders = Array.isArray(purchaseOrderPendingGeneratedOrders)
       ? purchaseOrderPendingGeneratedOrders
       : [];
@@ -1925,12 +1948,14 @@ export default function AcceptOrderPage() {
     if (!quotationId) return;
 
     setError("");
+    setPurchaseOrderGenerating(true);
     try {
       const { data } = await api.post(
         `/api/quotations/${quotationId}/processing/provider-purchase-orders`,
         {
           orders: generatedOrders,
         },
+        purchaseOrderCorrectionConfig(),
       );
       if (Array.isArray(data?.stages)) {
         setProcessingData((current) => ({
@@ -1947,10 +1972,22 @@ export default function AcceptOrderPage() {
           "No fue posible guardar las ordenes de compra",
         ),
       );
+    } finally {
+      setPurchaseOrderGenerating(false);
     }
   }
 
+  function purchaseOrderCorrectionConfig() {
+    return purchaseOrderCorrectionReason ? {
+      headers: { "X-Purchase-Order-Correction-Reason": encodeURIComponent(purchaseOrderCorrectionReason) },
+    } : {};
+  }
+
   async function deleteGeneratedPurchaseOrder(order) {
+    if (!canEditPurchaseOrder) {
+      setError("La etapa de orden de compra esta en solo consulta.");
+      return;
+    }
     const quotationId = Number(quotationToProcess?.id || 0);
     const orderId = Number(order?.orderId || 0);
     if (!quotationId || !orderId) return;
@@ -1971,6 +2008,7 @@ export default function AcceptOrderPage() {
     try {
       const { data } = await api.delete(
         `/api/quotations/${quotationId}/processing/provider-purchase-orders/${orderId}`,
+        purchaseOrderCorrectionConfig(),
       );
       const generatedPurchaseOrders = Array.isArray(
         data?.generatedPurchaseOrders,
@@ -2096,6 +2134,10 @@ export default function AcceptOrderPage() {
   }
 
   async function saveProcessingStage(stageCode, options = {}) {
+    if (stageCode === "provider_purchase_order" && !canEditPurchaseOrder) {
+      setError("La etapa de orden de compra esta en solo consulta.");
+      return false;
+    }
     const quotationId = Number(quotationToProcess?.id || 0);
     const stage = (processingData.stages || []).find(
       (item) => item.stageCode === stageCode,
@@ -2131,7 +2173,8 @@ export default function AcceptOrderPage() {
           ? `/api/quotations/${quotationId}/processing/acceptance-correction`
           : `/api/quotations/${quotationId}/processing/stages/${encodeURIComponent(stageCode)}`,
         correcting ? { acceptedAt: nextStageData.acceptedAt, notes: payload.notes } : payload,
-        correcting ? acceptanceCorrectionConfig(acceptanceCorrectionReason) : {},
+        correcting ? acceptanceCorrectionConfig(acceptanceCorrectionReason)
+          : stageCode === "provider_purchase_order" ? purchaseOrderCorrectionConfig() : {},
       );
       setProcessingData((current) => ({
         ...current,
@@ -2608,9 +2651,20 @@ export default function AcceptOrderPage() {
       },
       0,
     );
+    const generatedAssignmentKeys = new Set(
+      generatedPurchaseOrders.flatMap((order) =>
+        (Array.isArray(order?.lines) ? order.lines : [])
+          .map((line) => String(line?.sourceAssignmentKey || "").trim())
+          .filter(Boolean),
+      ),
+    );
     const selectedProductIds = new Set(
       Object.entries(rawProductAssignments)
-        .filter(([, assignment]) => Boolean(assignment?.selected))
+        .filter(
+          ([itemKey, assignment]) =>
+            Boolean(assignment?.selected) &&
+            !generatedAssignmentKeys.has(String(itemKey)),
+        )
         .map(([itemKey]) => String(itemKey)),
     );
     const selectedPurchaseOrderLines = buildPurchaseOrderLines({
@@ -2686,13 +2740,33 @@ export default function AcceptOrderPage() {
       (sum, order) => sum + Number(order?.subtotal || 0),
       0,
     );
-    const generatedAssignmentKeys = new Set(
-      generatedPurchaseOrders.flatMap((order) =>
-        (Array.isArray(order?.lines) ? order.lines : [])
-          .map((line) => String(line?.sourceAssignmentKey || "").trim())
-          .filter(Boolean),
-      ),
-    );
+    const providerPurchaseOrderSelectedTotalCost =
+      providerPurchaseOrderRows.reduce((sum, item) => {
+        const itemKey = String(item.assignmentKey || item.id || "");
+        const assignment = (itemKey && rawProductAssignments[itemKey]) || {};
+        if (!assignment?.selected || generatedAssignmentKeys.has(itemKey)) {
+          return sum;
+        }
+
+        const quantity = Number(
+          assignment?.quantity == null || assignment?.quantity === ""
+            ? item.quantity || 0
+            : assignment.quantity,
+        );
+        const unitCost = Number(
+          assignment?.unitCostWithDiscount == null ||
+            assignment?.unitCostWithDiscount === ""
+            ? item.unitCostWithDiscount || 0
+            : assignment.unitCostWithDiscount,
+        );
+
+        return (
+          sum +
+          (Number.isFinite(quantity) && Number.isFinite(unitCost)
+            ? quantity * unitCost
+            : 0)
+        );
+      }, 0);
     const deliveryTimeCode = String(
       quotationToProcess?.latestDeliveryTime || "",
     );
@@ -2708,11 +2782,6 @@ export default function AcceptOrderPage() {
         (option) => String(option.code || "") === paymentTermsCode,
       )?.name || paymentTermsCode;
     const quotationCommercialFields = [
-      {
-        key: "commercialDeliveryTime",
-        label: "Tiempo de entrega",
-        value: deliveryTimeName,
-      },
       {
         key: "commercialCurrency",
         label: "Moneda",
@@ -2820,6 +2889,55 @@ export default function AcceptOrderPage() {
                   const orderExtras = receptionItemExtras.filter(
                     (e) => String(e.orderId || "") === orderKey,
                   );
+                  const dateRows = [
+                    ...orderLines.map((line, lineIndex) => {
+                      const persistentKey = line?.itemId
+                        ? `${orderKey}:${line.itemId}`
+                        : `${orderKey}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                      const legacyKey = `${orderKey}:${line?.productId || line?.code || lineIndex}:${lineIndex}`;
+                      const key = receptionItems[persistentKey] ? persistentKey : legacyKey;
+                      return { key, values: receptionItems[key] || {}, isExtra: false };
+                    }),
+                    ...orderExtras.map((extra) => ({
+                      key: extra.id, values: extra, isExtra: true,
+                    })),
+                  ];
+                  const renderRepeatDateButton = (rowIndex, field, label) => {
+                    const sourceDate = dateRows[rowIndex].values[field];
+                    const targets = dateRows.slice(rowIndex + 1).filter(
+                      (row) => !row.values[field],
+                    );
+                    return (
+                      <button
+                        type="button"
+                        className="btn-secondary processing-repeat-date-button"
+                        aria-label={`Repetir ${label} en filas siguientes vacias`}
+                        title="Copia esta fecha en la misma columna de las filas siguientes vacias de esta orden"
+                        disabled={!processingData.permissions?.canUpdate || !sourceDate || !targets.length}
+                        onClick={() => {
+                          const nextItems = { ...receptionItems };
+                          const extraIds = new Set();
+                          targets.forEach((row) => {
+                            if (row.isExtra) {
+                              extraIds.add(row.key);
+                            } else {
+                              nextItems[row.key] = { ...row.values, [field]: sourceDate };
+                            }
+                          });
+                          patchProcessingStage("products_reception", {
+                            stageData: {
+                              receptionItems: nextItems,
+                              receptionItemExtras: receptionItemExtras.map((extra) =>
+                                extraIds.has(extra.id) ? { ...extra, [field]: sourceDate } : extra,
+                              ),
+                            },
+                          });
+                        }}
+                      >
+                        Repetir fecha
+                      </button>
+                    );
+                  };
 
                   return (
                     <article
@@ -2953,6 +3071,7 @@ export default function AcceptOrderPage() {
                                         }
                                         placeholderText="Seleccionar fecha"
                                       />
+                                      {renderRepeatDateButton(lineIndex, "receptionDate", "fecha de recepcion")}
                                     </td>
                                     <td>
                                       <input
@@ -2985,6 +3104,7 @@ export default function AcceptOrderPage() {
                                         disabled={!processingData.permissions?.canUpdate}
                                         placeholderText="Inicio soporte"
                                       />
+                                      {renderRepeatDateButton(lineIndex, "supportStartDate", "inicio soporte/suscripcion")}
                                     </td>
                                     <td>
                                       <DatePicker
@@ -3004,6 +3124,7 @@ export default function AcceptOrderPage() {
                                         disabled={!processingData.permissions?.canUpdate}
                                         placeholderText="Fin soporte"
                                       />
+                                      {renderRepeatDateButton(lineIndex, "supportEndDate", "fin soporte/suscripcion")}
                                     </td>
                                     <td style={{ minWidth: 160 }}>
                                       {(evidencesByItemKey.get(receptionItemKey) || []).map((ev) => {
@@ -3078,7 +3199,7 @@ export default function AcceptOrderPage() {
                                   </tr>
                                 );
                               })}
-                              {orderExtras.map((extra) => {
+                              {orderExtras.map((extra, extraIndex) => {
                                 const sourceLine = orderLines.find((line, lineIndex) => {
                                   const sourceKey = line?.itemId
                                     ? `${orderKey}:${line.itemId}`
@@ -3159,6 +3280,7 @@ export default function AcceptOrderPage() {
                                       disabled={!processingData.permissions?.canUpdate}
                                       placeholderText="Seleccionar fecha"
                                     />
+                                    {renderRepeatDateButton(orderLines.length + extraIndex, "receptionDate", "fecha de recepcion")}
                                   </td>
                                   <td>
                                     <input
@@ -3201,6 +3323,7 @@ export default function AcceptOrderPage() {
                                       disabled={!processingData.permissions?.canUpdate}
                                       placeholderText="Inicio soporte"
                                     />
+                                    {renderRepeatDateButton(orderLines.length + extraIndex, "supportStartDate", "inicio soporte/suscripcion")}
                                   </td>
                                   <td>
                                     <DatePicker
@@ -3225,6 +3348,7 @@ export default function AcceptOrderPage() {
                                       disabled={!processingData.permissions?.canUpdate}
                                       placeholderText="Fin soporte"
                                     />
+                                    {renderRepeatDateButton(orderLines.length + extraIndex, "supportEndDate", "fin soporte/suscripcion")}
                                   </td>
                                   <td style={{ minWidth: 160 }}>
                                     {(evidencesByItemKey.get(extra.id) || []).map((ev) => {
@@ -3820,6 +3944,55 @@ export default function AcceptOrderPage() {
 
         {stage.stageCode === "provider_purchase_order" ? (
           <section className="processing-products-box">
+            {isPurchaseOrderCompleted && (
+              <section className="processing-stage-box">
+                <p role="status">Orden de compra culminada. {purchaseOrderCorrectionReason
+                  ? "Modificacion de datos de culminacion activa."
+                  : "Contenido en solo consulta."}</p>
+                {processingData.permissions?.canUpdate && processingData.permissions?.canCorrectPurchaseOrder && (
+                  purchaseOrderCorrectionReason ? (
+                    <>
+                      <p>Motivo: {purchaseOrderCorrectionReason}</p>
+                      <button type="button" className="btn-primary"
+                        disabled={purchaseOrderBusy}
+                        onClick={() => void (async () => {
+                          if (await saveProcessingStage(stage.stageCode)) {
+                            setPurchaseOrderCorrectionReason("");
+                            setPurchaseOrderCorrectionDraft("");
+                          }
+                        })()}>
+                        Finalizar modificación
+                      </button>
+                    </>
+                  ) : purchaseOrderCorrectionOpen ? (
+                    <>
+                      <label className="field-group">
+                        <span>Motivo de modificación de culminación</span>
+                        <textarea minLength={10} maxLength={1000} rows={3}
+                          value={purchaseOrderCorrectionDraft}
+                          onChange={(event) => setPurchaseOrderCorrectionDraft(event.target.value)} />
+                      </label>
+                      <p>Indica entre 10 y 1000 caracteres. Los cambios se guardan con motivo y auditoria, conservando el estado y la fecha de culminacion.</p>
+                      <button type="button" className="btn-secondary"
+                        onClick={() => setPurchaseOrderCorrectionOpen(false)}>Volver</button>
+                      <button type="button" className="btn-primary"
+                        disabled={purchaseOrderBusy || purchaseOrderCorrectionDraft.trim().length < 10}
+                        onClick={() => {
+                          setPurchaseOrderCorrectionReason(purchaseOrderCorrectionDraft.trim());
+                          setPurchaseOrderCorrectionOpen(false);
+                        }}>Iniciar modificación</button>
+                    </>
+                  ) : (
+                    <button type="button" className="btn-secondary"
+                      disabled={purchaseOrderBusy}
+                      onClick={() => setPurchaseOrderCorrectionOpen(true)}>
+                      Modificar datos de culminación
+                    </button>
+                  )
+                )}
+              </section>
+            )}
+            <fieldset className="processing-purchase-order-edit-fields" disabled={!canEditPurchaseOrder}>
             <header>
               <h6>Productos</h6>
               <p>
@@ -4370,17 +4543,33 @@ export default function AcceptOrderPage() {
                   </tbody>
                   <tfoot>
                     <tr>
-                      <th colSpan={8} className="is-right">
-                        Costo total
+                      <th
+                        colSpan={10}
+                        className="is-right processing-purchase-order-totals-cell"
+                      >
+                        <div className="processing-purchase-order-total-groups">
+                          <div>
+                            <span>Costo total</span>
+                            <strong>
+                              {formatCurrency(
+                                providerPurchaseOrderTotalCost,
+                                providerPurchaseOrderRows[0]?.currencyCode ||
+                                  processingCurrencyCode,
+                              )}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Costo total seleccionado</span>
+                            <strong>
+                              {formatCurrency(
+                                providerPurchaseOrderSelectedTotalCost,
+                                providerPurchaseOrderRows[0]?.currencyCode ||
+                                  processingCurrencyCode,
+                              )}
+                            </strong>
+                          </div>
+                        </div>
                       </th>
-                      <th className="is-right">
-                        {formatCurrency(
-                          providerPurchaseOrderTotalCost,
-                          providerPurchaseOrderRows[0]?.currencyCode ||
-                            processingCurrencyCode,
-                        )}
-                      </th>
-                      <th aria-label="Acciones" />
                     </tr>
                   </tfoot>
                 </table>
@@ -4499,6 +4688,24 @@ export default function AcceptOrderPage() {
                   />
                 </label>
 
+                <label className="field-group processing-stage-field">
+                  <span>Tiempo de entrega</span>
+                  <input
+                    type="text"
+                    value={
+                      stage?.stageData?.purchaseOrderDeliveryTime ??
+                      deliveryTimeName
+                    }
+                    onChange={(event) =>
+                      updateActiveStageDataField(
+                        "purchaseOrderDeliveryTime",
+                        event.target.value,
+                      )
+                    }
+                    disabled={!processingData.permissions?.canUpdate}
+                  />
+                </label>
+
                 {quotationCommercialFields.map((field) => (
                   <label
                     key={field.key}
@@ -4534,6 +4741,7 @@ export default function AcceptOrderPage() {
               </div>
             </section>
 
+            </fieldset>
             <section className="processing-products-box">
               <header>
                 <h6>Ordenes generadas</h6>
@@ -4615,7 +4823,7 @@ export default function AcceptOrderPage() {
                                   deleteGeneratedPurchaseOrder(order)
                                 }
                                 disabled={
-                                  !processingData.permissions?.canUpdate ||
+                                  !canEditPurchaseOrder ||
                                   deletingPurchaseOrderIds.has(
                                     Number(order.orderId),
                                   )
@@ -4664,6 +4872,7 @@ export default function AcceptOrderPage() {
               )}
             </section>
 
+            <fieldset className="processing-purchase-order-edit-fields" disabled={!canEditPurchaseOrder}>
             <div className="processing-stage-actions">
               <button
                 type="button"
@@ -4745,6 +4954,7 @@ export default function AcceptOrderPage() {
                   })
                 }
                 disabled={
+                  isPurchaseOrderCompleted ||
                   !processingData.permissions?.canUpdate ||
                   processingSavingStageCode === stage.stageCode
                 }
@@ -4752,6 +4962,7 @@ export default function AcceptOrderPage() {
                 Culminar Orden de Compra
               </button>
             </div>
+            </fieldset>
           </section>
         ) : null}
       </section>
@@ -4855,6 +5066,17 @@ export default function AcceptOrderPage() {
     activeProcessingStage?.stageCode === "kickoff_external";
   const isProviderPurchaseOrderStage =
     activeProcessingStage?.stageCode === "provider_purchase_order";
+  const purchaseOrderStage = processingStages.find(
+    (stage) => stage.stageCode === "provider_purchase_order",
+  );
+  const isPurchaseOrderCompleted = purchaseOrderStage?.status === "completed";
+  const purchaseOrderBusy = purchaseOrderGenerating ||
+    deletingPurchaseOrderIds.size > 0 ||
+    processingSavingStageCode === "provider_purchase_order";
+  const canEditPurchaseOrder = Boolean(processingData.permissions?.canUpdate) &&
+    (!isPurchaseOrderCompleted ||
+      (Boolean(processingData.permissions?.canCorrectPurchaseOrder) && Boolean(purchaseOrderCorrectionReason))) &&
+    !purchaseOrderBusy;
   const processingFinancials = quotationToProcess
     ? getQuotationFinancials(quotationToProcess)
     : getQuotationFinancials({});

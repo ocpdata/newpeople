@@ -136,6 +136,7 @@ const PERMISSION_MODULE_DESCRIPTIONS = {
     "Organiza documentos internos por temas para que la IA los consulte como fuente de conocimiento. La biblioteca permite revisar los temas y documentos, mientras que los permisos de administración controlan su importación, carga, actualización, clasificación y eliminación. El acceso a esta pantalla no es requisito para consultar documentos activos desde el chatbot.",
 };
 const ROLE_PERMISSION_LABELS = {
+  "aceptar_pedido.procesamiento.modificar_culminacion_orden_compra": { label: "Modificar datos de culminación de orden de compra", description: "Modificar la etapa de orden de compra culminada con motivo y auditoría. Requiere actualización de procesamiento. Conserva el estado y la fecha de culminación." },
   "informacion_financiera.read": { label: "Consultar información financiera mensual" },
   "informacion_financiera.update": { label: "Capturar y modificar información financiera mensual" },
   "variable_comercial.read": { label: "Consultar variable comercial del equipo" },

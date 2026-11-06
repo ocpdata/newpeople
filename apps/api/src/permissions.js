@@ -2,6 +2,10 @@ import { query, withTransaction } from "./db.js";
 
 const CORE_PERMISSIONS = [
   {
+    code: "aceptar_pedido.procesamiento.modificar_culminacion_orden_compra", module: "aceptar_pedido", action: "procesamiento_modificar_culminacion_orden_compra",
+    description: "Modificar datos del step de orden de compra culminado, con motivo y auditoria. Requiere actualizacion de procesamiento y acceso a la cotizacion. Conserva el estado y la fecha de culminacion.",
+  },
+  {
     code: "variable_comercial.read", module: "variable_comercial", action: "read",
     description: "Consultar el variable comercial del trimestre de todo el equipo: cuota, margen, componentes de pago, ventas acreditadas y reglas vigentes. Incluye acceso al modulo, sin permisos de otros modulos.",
   },

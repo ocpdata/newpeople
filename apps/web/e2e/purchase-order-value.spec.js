@@ -6,6 +6,7 @@ async function openProcessing(page, {
   accepted = false, acceptanceRecorded = accepted, failAcceptance = false,
   completionFailures = 0, staleList = false, canCorrectAcceptance = false,
   kickoffUsers = [], allUsers = kickoffUsers, previousKickoffAttendees = null,
+  processingOverride = {},
 } = {}) {
   let quotationStatus = accepted ? "aceptada" : "ganada";
   let recorded = acceptanceRecorded;
@@ -77,7 +78,7 @@ async function openProcessing(page, {
       json: { quotation: { statusCode: quotationStatus }, permissions: { canUpdate, canConvoke: canUpdate, canCorrectAcceptance },
         assignableUsers: allUsers,
         kickoffInternal: { assignableUsers: kickoffUsers, latestInvitation, invitations: latestInvitation ? [latestInvitation] : [] },
-        stages: stages() },
+        stages: stages(), ...processingOverride },
     });
     if (url.pathname === "/api/quotations/1/processing/kickoff-internal/invitations") {
       invitations.push(route.request().postDataJSON());
@@ -160,6 +161,273 @@ async function openProcessing(page, {
   return { registrations, removals, providerRegistrations, providerRemovals,
     transitions, completions, stageRequests, invitations, corrections, correctionHeaders, value: () => value };
 }
+
+test("recepcion repite las tres fechas solo en filas siguientes vacias de la misma orden", async ({ page }) => {
+  const sourceDates = {
+    receptionDate: "2026-11-06", supportStartDate: "2026-11-07", supportEndDate: "2027-11-07",
+  };
+  const existingDates = {
+    receptionDate: "2026-10-01", supportStartDate: "2026-10-02", supportEndDate: "2027-10-02",
+  };
+  const receptionStage = {
+    stageCode: "products_reception", stageName: "Recepcion de productos", status: "in_progress",
+    stageData: {
+      receptionItems: {
+        "1:11": { ...sourceDates, serialKey: "ORIGINAL" },
+        "1:12": { ...existingDates },
+      },
+      receptionItemExtras: [
+        { id: "partial-1", orderId: "1", sourceItemKey: "1:11", code: "PARCIAL-1", ...sourceDates },
+        { id: "partial-2", orderId: "1", sourceItemKey: "1:11", code: "PARCIAL-2" },
+      ],
+    },
+  };
+  await openProcessing(page, { processingOverride: { stages: [
+    receptionStage,
+    { stageCode: "provider_purchase_order", stageName: "Ordenes", status: "completed", stageData: {
+      generatedPurchaseOrders: [
+        { orderId: 1, orderNumber: "OC-1", lines: [
+          { itemId: 11, code: "ORIGEN", quantity: 3 },
+          { itemId: 12, code: "EXISTENTE", quantity: 1 },
+          { itemId: 13, code: "VACIO", quantity: 1 },
+        ] },
+        { orderId: 2, orderNumber: "OC-2", lines: [{ itemId: 21, code: "OTRA-ORDEN", quantity: 1 }] },
+      ],
+    } },
+  ] } });
+  let saved;
+  await page.route("**/api/quotations/1/processing/stages/products_reception", async (route) => {
+    saved = route.request().postDataJSON();
+    Object.assign(receptionStage, saved);
+    return route.fulfill({ json: { stages: [receptionStage] } });
+  });
+  const row = (code) => page.getByRole("row").filter({ has: page.getByText(code, { exact: true }) });
+  const labels = ["fecha de recepcion", "inicio soporte/suscripcion", "fin soporte/suscripcion"];
+  for (const label of labels) {
+    const name = `Repetir ${label} en filas siguientes vacias`;
+    await expect(row("VACIO").getByRole("button", { name, exact: true })).toBeDisabled();
+    await row("PARCIAL-1").getByRole("button", { name, exact: true }).click();
+    await expect(row("PARCIAL-1").getByRole("button", { name, exact: true })).toBeDisabled();
+    await row("ORIGEN").getByRole("button", { name, exact: true }).click();
+    await expect(row("ORIGEN").getByRole("button", { name, exact: true })).toBeDisabled();
+  }
+  await expect(row("VACIO").getByPlaceholder("Seleccionar fecha")).toHaveValue("06-11-2026");
+  await expect(row("VACIO").getByPlaceholder("Inicio soporte")).toHaveValue("07-11-2026");
+  await expect(row("VACIO").getByPlaceholder("Fin soporte")).toHaveValue("07-11-2027");
+  await expect(row("EXISTENTE").getByPlaceholder("Seleccionar fecha")).toHaveValue("01-10-2026");
+  await expect(row("OTRA-ORDEN").getByPlaceholder("Seleccionar fecha")).toHaveValue("");
+  await page.getByRole("button", { name: "Guardar recepcion", exact: true }).click();
+  await expect.poll(() => saved?.stageData?.receptionItems?.["1:VACIO:2"]?.receptionDate).toBe(sourceDates.receptionDate);
+  expect(saved.stageData.receptionItems["1:11"]).toEqual({ ...sourceDates, serialKey: "ORIGINAL" });
+  expect(saved.stageData.receptionItems["1:12"]).toEqual(existingDates);
+  expect(saved.stageData.receptionItems["1:VACIO:2"]).toEqual(sourceDates);
+  expect(saved.stageData.receptionItems["2:OTRA-ORDEN:0"]).toBeUndefined();
+  expect(saved.stageData.receptionItemExtras[1]).toMatchObject(sourceDates);
+});
+
+test("recepcion deshabilita repetir fechas sin permiso de edicion", async ({ page }) => {
+  await openProcessing(page, { canUpdate: false, processingOverride: { stages: [
+    { stageCode: "products_reception", stageName: "Recepcion", status: "in_progress",
+      stageData: { receptionItems: { "1:11": {
+        receptionDate: "2026-11-06", supportStartDate: "2026-11-06", supportEndDate: "2027-11-06",
+      } } } },
+    { stageCode: "provider_purchase_order", status: "completed", stageData: { generatedPurchaseOrders: [
+      { orderId: 1, lines: [{ itemId: 11, code: "ORIGEN" }, { itemId: 12, code: "VACIO" }] },
+    ] } },
+  ] } });
+  const buttons = page.getByRole("button", { name: /^Repetir .* en filas siguientes vacias$/ });
+  await expect(buttons).toHaveCount(6);
+  for (const button of await buttons.all()) await expect(button).toBeDisabled();
+});
+
+test("step 4 deriva proveedor y contactos sin contar productos de ordenes generadas", async ({ page }) => {
+  await openProcessing(page, { processingOverride: {
+    quotation: { products: [
+      { id: 101, code: "GENERADO", providerId: 1, quantity: 1, unitCostWithDiscount: 10 },
+      { id: 102, code: "DISPONIBLE", providerId: 2, quantity: 1, unitCostWithDiscount: 20 },
+      { id: 103, code: "OTRO", providerId: 3, quantity: 1, unitCostWithDiscount: 30 },
+      { id: 104, code: "SIN-PROVEEDOR", quantity: 1, unitCostWithDiscount: 40 },
+    ] },
+    providers: [
+      { id: 1, name: "Proveedor generado", contacts: [{ id: 11, firstName: "Contacto generado" }] },
+      { id: 2, name: "Proveedor disponible", contacts: [{ id: 22, firstName: "Contacto disponible" }] },
+      { id: 3, name: "Otro proveedor", contacts: [{ id: 33, firstName: "Otro contacto" }] },
+    ],
+    stages: [{
+      stageCode: "provider_purchase_order", stageName: "Orden de compra a proveedores",
+      status: "in_progress", stageData: {
+        productAssignments: { "101": { selected: true }, "102": { selected: true } },
+        providerContactId: 11,
+        generatedPurchaseOrders: [{
+          orderId: 1, providerId: 1, orderNumber: "OC-1",
+          lines: [{ productId: 101, sourceAssignmentKey: "101", quantity: 1, unitCost: 10 }],
+        }],
+      },
+    }],
+  } });
+
+  const provider = page.getByLabel("Proveedor", { exact: true });
+  const contact = page.locator("label").filter({
+    has: page.getByText("Contacto del proveedor", { exact: true }),
+  }).getByRole("combobox");
+  const available = page.getByRole("row").filter({ has: page.getByText("DISPONIBLE", { exact: true }) }).getByRole("checkbox");
+  const other = page.getByRole("row").filter({ has: page.getByText("OTRO", { exact: true }) }).getByRole("checkbox");
+  const missing = page.getByRole("row").filter({ has: page.getByText("SIN-PROVEEDOR", { exact: true }) }).getByRole("checkbox");
+  await expect(page.getByRole("row").filter({ has: page.getByText("GENERADO", { exact: true }) }).getByRole("checkbox")).toBeDisabled();
+  await expect(provider).toHaveValue("Proveedor disponible");
+  await expect(contact).toHaveValue("");
+  await expect(contact.getByRole("option", { name: "Contacto disponible", exact: true })).toHaveCount(1);
+  await expect(contact.getByRole("option", { name: "Contacto generado", exact: true })).toHaveCount(0);
+
+  await other.check();
+  await expect(provider).toHaveValue("Seleccion multiple de proveedores");
+  await expect(contact).toBeDisabled();
+  await other.uncheck();
+  await missing.check();
+  await expect(provider).toHaveValue("Hay items sin proveedor");
+  await missing.uncheck();
+  await available.uncheck();
+  await expect(provider).toHaveValue("Selecciona items de un proveedor");
+  await expect(contact).toBeDisabled();
+  await other.check();
+  await expect(provider).toHaveValue("Otro proveedor");
+  await expect(contact.getByRole("option", { name: "Otro contacto", exact: true })).toHaveCount(1);
+});
+
+test("step 4 guarda el tiempo de entrega editable y lo lleva a la vista previa", async ({ page }) => {
+  const stage = {
+    stageCode: "provider_purchase_order", stageName: "Orden de compra a proveedores",
+    status: "in_progress", stageData: {
+      productAssignments: { "101": { selected: true } },
+    },
+  };
+  await openProcessing(page, { processingOverride: {
+    quotation: { products: [
+      { id: 101, code: "PRODUCTO", providerId: 1, quantity: 1, unitCostWithDiscount: 10 },
+    ] },
+    providers: [{ id: 1, name: "Proveedor", contacts: [] }],
+    stages: [stage],
+  } });
+  let savedPayload;
+  await page.route("**/api/quotations/1/processing/stages/provider_purchase_order", async (route) => {
+    savedPayload = route.request().postDataJSON();
+    Object.assign(stage, savedPayload);
+    return route.fulfill({ json: { stages: [stage] } });
+  });
+  const deliveryTime = page.getByLabel("Tiempo de entrega", { exact: true });
+  await expect(deliveryTime).toBeEditable();
+  await deliveryTime.fill("15 dias despues del anticipo");
+  await page.getByRole("button", { name: "Guardar", exact: true }).click();
+  await expect.poll(() => savedPayload?.stageData?.purchaseOrderDeliveryTime)
+    .toBe("15 dias despues del anticipo");
+  await page.reload();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await expect(deliveryTime).toHaveValue("15 dias despues del anticipo");
+  await page.getByRole("button", { name: "Vista previa", exact: true }).click();
+  await expect(deliveryTime.last()).toHaveValue("15 dias despues del anticipo");
+  await expect(deliveryTime.last()).toBeDisabled();
+});
+
+test("step 4 no permite editar tiempo de entrega sin permiso", async ({ page }) => {
+  await openProcessing(page, { canUpdate: false, processingOverride: {
+    stages: [{
+      stageCode: "provider_purchase_order", stageName: "Orden de compra a proveedores",
+      status: "in_progress", stageData: { purchaseOrderDeliveryTime: "30 dias" },
+    }],
+  } });
+  await expect(page.getByLabel("Tiempo de entrega", { exact: true })).toHaveValue("30 dias");
+  await expect(page.getByLabel("Tiempo de entrega", { exact: true })).toBeDisabled();
+});
+
+test("step 4 culmina, bloquea y permite corregir con motivo sin cambiar su culminacion", async ({ page }) => {
+  const stage = {
+    stageCode: "provider_purchase_order", stageName: "Orden de compra a proveedores",
+    status: "in_progress", stageData: {
+      productAssignments: { "101": { selected: true } },
+      purchaseOrderDeliveryTime: "10 dias",
+      generatedPurchaseOrders: [{
+        orderId: 1, providerId: 1, orderNumber: "OC-1",
+        lines: [{ productId: 102, sourceAssignmentKey: "102", quantity: 1, unitCost: 10 }],
+      }],
+    },
+  };
+  await openProcessing(page, { processingOverride: {
+    quotation: { products: [
+      { id: 101, code: "DISPONIBLE", providerId: 1, quantity: 1, unitCostWithDiscount: 10 },
+      { id: 102, code: "GENERADO", providerId: 1, quantity: 1, unitCostWithDiscount: 10 },
+    ] },
+    providers: [{ id: 1, name: "Proveedor", contacts: [] }],
+    permissions: { canUpdate: true, canCorrectPurchaseOrder: true },
+    stages: [stage],
+  } });
+  const writes = [];
+  let failCorrection = false;
+  await page.route("**/api/quotations/1/processing/stages/provider_purchase_order", async (route) => {
+    const body = route.request().postDataJSON();
+    writes.push({ body, reason: route.request().headers()["x-purchase-order-correction-reason"] });
+    if (failCorrection) return route.fulfill({ status: 500, json: { message: "Fallo de correccion" } });
+    Object.assign(stage, body);
+    return route.fulfill({ json: { stages: [stage] } });
+  });
+  const delivery = page.getByLabel("Tiempo de entrega", { exact: true });
+  await page.getByRole("button", { name: "Culminar Orden de Compra", exact: true }).click();
+  await expect(delivery).toBeDisabled();
+  const completedAt = stage.completedAt;
+  for (const name of ["Guardar", "Vista previa", "Anadir item", "Culminar Orden de Compra", "Eliminar orden OC-1"]) {
+    await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+  }
+  await expect(page.getByRole("button", { name: "Ver orden OC-1", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Modificar datos de culminación", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Iniciar modificación", exact: true })).toBeDisabled();
+  await page.getByLabel("Motivo de modificación de culminación").fill("Correccion solicitada por operaciones");
+  await page.getByRole("button", { name: "Iniciar modificación", exact: true }).click();
+  await expect(delivery).toBeEditable();
+  await expect(page.getByRole("row").filter({ has: page.getByText("GENERADO", { exact: true }) }).getByRole("checkbox")).toBeDisabled();
+  await delivery.fill("20 dias");
+  failCorrection = true;
+  await page.getByRole("button", { name: "Finalizar modificación", exact: true }).click();
+  await expect(page.getByText("Fallo de correccion", { exact: true })).toBeVisible();
+  await expect(delivery).toBeEditable();
+  failCorrection = false;
+  await page.getByRole("button", { name: "Finalizar modificación", exact: true }).click();
+  await expect(delivery).toBeDisabled();
+  expect(decodeURIComponent(writes.at(-1).reason)).toBe("Correccion solicitada por operaciones");
+  expect(stage.status).toBe("completed");
+  expect(stage.completedAt).toBe(completedAt);
+  await page.reload();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await expect(delivery).toBeDisabled();
+  await expect(delivery).toHaveValue("20 dias");
+  await page.getByRole("button", { name: "Modificar datos de culminación", exact: true }).click();
+  await page.getByLabel("Motivo de modificación de culminación").fill("Segunda revision de operaciones");
+  await page.getByRole("button", { name: "Iniciar modificación", exact: true }).click();
+  await expect(delivery).toBeEditable();
+  await page.getByRole("button", { name: "Cerrar procesamiento", exact: true }).click();
+  await page.getByRole("cell", { name: "Proyecto OC", exact: true }).click();
+  await expect(delivery).toBeDisabled();
+});
+
+test("step 4 culminado no ofrece modificacion sin el permiso especifico", async ({ page }) => {
+  await openProcessing(page, { processingOverride: { stages: [{
+    stageCode: "provider_purchase_order", stageName: "Orden de compra a proveedores",
+    status: "completed", completedAt: "2026-11-06T12:00:00.000Z",
+    stageData: { purchaseOrderDeliveryTime: "30 dias" },
+  }] } });
+  await expect(page.getByLabel("Tiempo de entrega", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Modificar datos de culminación", exact: true })).toHaveCount(0);
+});
+
+test("step 4 requiere edicion general aunque tenga permiso de correccion", async ({ page }) => {
+  await openProcessing(page, { canUpdate: false, processingOverride: {
+    permissions: { canUpdate: false, canCorrectPurchaseOrder: true },
+    stages: [{
+      stageCode: "provider_purchase_order", stageName: "Orden de compra a proveedores",
+      status: "completed", stageData: {},
+    }],
+  } });
+  await expect(page.getByRole("button", { name: "Modificar datos de culminación", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Guardar", exact: true })).toBeDisabled();
+});
 
 test("corrige aceptacion con motivo y vuelve a bloquear sin aceptar ni enviar correo", async ({ page }) => {
   const state = await openProcessing(page, { accepted: true, canCorrectAcceptance: true });
